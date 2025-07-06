@@ -1,0 +1,34 @@
+[project]
+name = "ai-driven-genetic-disorder-detection"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "MuhammadAbdullah95", email = "ma2404374@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "bcrypt>=4.3.0",
+    "fastapi[standard]>=0.115.14",
+    "google-genai>=1.24.0",
+    "langchain>=0.3.26",
+    "langchain-google-genai>=2.1.6",
+    "langchain-tavily>=0.2.6",
+    "openai-agents>=0.1.0",
+    "pandas>=2.3.0",
+    "passlib>=1.7.4",
+    "psycopg2>=2.9.10",
+    "pydantic>=2.11.7",
+    "python-dotenv>=1.1.1",
+    "python-jose[cryptography]>=3.5.0",
+    "scikit-allel>=1.3.13",
+    "sqlalchemy>=2.0.41",
+    "tavily-python>=0.7.9",
+]
+
+[project.scripts]
+ai-driven-genetic-disorder-detection = "ai_driven_genetic_disorder_detection:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
