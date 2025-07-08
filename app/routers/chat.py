@@ -6,7 +6,7 @@ import app.models as models, app.schemas as schemas
 from app.database import SessionLocal
 from .auth_utils import get_current_user
 
-router = APIRouter(prefix="/chats", tags=["Chats"])
+router = APIRouter(tags=["Chats"])
 
 # Dependency
 def get_db():

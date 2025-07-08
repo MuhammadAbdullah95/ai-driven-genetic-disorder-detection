@@ -10,6 +10,13 @@ from fastapi import HTTPException
 import allel  # For proper VCF parsing
 import numpy as np
 import pandas as pd
+from fastapi import status
+import datetime
+import asyncio
+from tqdm.asyncio import tqdm_asyncio
+
+CONCURRENCY_LIMIT = 5  # Adjust based on your LLM/search rate limits
+semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
 # Load environment variables
 load_dotenv()
@@ -34,7 +41,7 @@ run_config = RunConfig(model=model, model_provider=external_client, tracing_disa
 def parse_vcf_comprehensive(file_path: str) -> List[dict]:
     """
     Comprehensive VCF parser using pandas that handles both standard fields and sample genotype data.
-    Similar to the user's approach for parsing VCF files with sample data.
+    Updated to properly handle the sample VCF format with proper column names and genotype parsing.
     """
     try:
         print(f"Parsing VCF comprehensively with pandas: {file_path}")
@@ -60,7 +67,7 @@ def parse_vcf_comprehensive(file_path: str) -> List[dict]:
         print(f"VCF DataFrame shape: {df.shape}")
         print(f"VCF DataFrame columns: {len(df.columns)}")
         
-        # Determine column structure
+        # Determine column structure based on the sample VCF format
         if len(df.columns) >= 8:
             # Standard VCF columns
             standard_cols = ["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]
@@ -68,9 +75,10 @@ def parse_vcf_comprehensive(file_path: str) -> List[dict]:
             # If we have more columns, they are FORMAT + sample columns
             if len(df.columns) > 8:
                 format_col = "FORMAT"
-                sample_cols = [f"SAMPLE_{i}" for i in range(len(df.columns) - 9)]  # -9 because we have 8 standard + 1 FORMAT
+                # For the sample VCF, we have exactly one sample column named "SAMPLE1"
+                sample_cols = ["SAMPLE1"] if len(df.columns) == 10 else [f"SAMPLE_{i}" for i in range(len(df.columns) - 9)]
                 all_cols = standard_cols + [format_col] + sample_cols
-                print(f"Detected {len(sample_cols)} sample columns")
+                print(f"Detected {len(sample_cols)} sample columns: {sample_cols}")
             else:
                 all_cols = standard_cols
                 format_col = None
@@ -87,10 +95,12 @@ def parse_vcf_comprehensive(file_path: str) -> List[dict]:
                 gene = "Unknown"
                 info_str = str(row["INFO"])
                 if not pd.isna(info_str) and info_str != 'nan':
+                    # Try to extract gene from various INFO field formats
                     for entry in info_str.split(";"):
                         if entry.startswith("GENE="):
                             gene = entry.split("=", 1)[1]
                             break
+                        # For the sample VCF, we don't have GENE field, so keep as "Unknown"
                 
                 # Handle NaN values
                 pos = row["POS"]
@@ -120,24 +130,35 @@ def parse_vcf_comprehensive(file_path: str) -> List[dict]:
                     for sample_col in sample_cols:
                         if sample_col in df.columns:
                             sample_data = str(row[sample_col]) if not pd.isna(row[sample_col]) else "./."
-                            # Extract genotype (first part before ':')
+                            # Extract genotype (first part before ':') and depth
                             if ':' in sample_data:
-                                genotype = sample_data.split(':')[0]
+                                parts = sample_data.split(':')
+                                genotype = parts[0]  # GT part (e.g., "0/1")
+                                depth = parts[1] if len(parts) > 1 else "0"  # DP part (e.g., "20")
+                                genotypes[sample_col] = {
+                                    "genotype": genotype,
+                                    "depth": depth,
+                                    "raw": sample_data
+                                }
                             else:
-                                genotype = sample_data
-                            genotypes[sample_col] = genotype
+                                genotypes[sample_col] = {
+                                    "genotype": sample_data,
+                                    "depth": "0",
+                                    "raw": sample_data
+                                }
                     
                     variant["genotypes"] = genotypes
                     
                     # Calculate genotype statistics
                     if genotypes:
                         genotype_counts = {}
-                        for gt in genotypes.values():
+                        for sample_data in genotypes.values():
+                            gt = sample_data["genotype"]
                             genotype_counts[gt] = genotype_counts.get(gt, 0) + 1
                         variant["genotype_stats"] = genotype_counts
                 
                 results.append(variant)
-                print(f"Parsed variant {idx+1}: {variant['chromosome']}:{variant['position']} {variant['gene']}")
+                print(f"Parsed variant {idx+1}: {variant['chromosome']}:{variant['position']} {variant['gene']} - Genotypes: {variant.get('genotypes', {})}")
             
             print(f"Comprehensive parsing completed. Total variants found: {len(results)}")
             return results
@@ -335,8 +356,13 @@ async def annotate_with_search(variants: List[dict]) -> List[VariantInfo]:
             genotype_str = ""
             if 'genotypes' in var and var['genotypes']:
                 genotype_str = "\nGENOTYPE DATA:\n"
-                for sample, genotype in var['genotypes'].items():
-                    genotype_str += f"- {sample}: {genotype}\n"
+                for sample, genotype_data in var['genotypes'].items():
+                    if isinstance(genotype_data, dict):
+                        # New format with genotype and depth
+                        genotype_str += f"- {sample}: {genotype_data['genotype']} (Depth: {genotype_data['depth']})\n"
+                    else:
+                        # Old format (string)
+                        genotype_str += f"- {sample}: {genotype_data}\n"
                 if 'genotype_stats' in var:
                     genotype_str += f"\nGenotype Statistics: {var['genotype_stats']}\n"
             
@@ -397,49 +423,16 @@ async def _handle_chat_logic(chat, message, file, db):
         # Handle file upload
         if file is not None:
             try:
-                file_path = f"uploads/{file.filename}"
-                with open(file_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
+                # Use unified VCF processing function
+                result = await process_vcf_file(file, db, None, create_chat=False)
                 
-                print(f"File saved to: {file_path}")
-                # Try comprehensive parsing first, fallback to basic parsing
-                try:
-                    variants = parse_vcf_comprehensive(file_path)
-                except Exception as e:
-                    print(f"Comprehensive parsing failed: {e}")
-                    variants = parse_vcf(file_path)
-                print(f"Variants from parse_vcf: {variants}")
-                print(f"Number of variants: {len(variants)}")
-                
-                if not variants:
-                    print("No variants found - raising error")
-                    raise HTTPException(status_code=400, detail="No valid variants found in VCF file")
-                
-                print("Calling annotate_with_search...")
-                summaries = await annotate_with_search(variants)
-                print(f"Summaries returned: {len(summaries)}")
-                
-                # Create a more detailed summary
-                summary_parts = []
-                for i, v in enumerate(summaries):
-                    part = f"Variant {i+1}:\n"
-                    part += f"  Location: {v.chromosome}:{v.position}\n"
-                    part += f"  rsID: {v.rsid}\n"
-                    part += f"  Gene: {v.gene}\n"
-                    part += f"  Change: {v.reference} → {v.alternate}\n"
-                    part += f"  Analysis: {v.search_summary}\n"
-                    summary_parts.append(part)
-                
-                summary_text = "\n".join(summary_parts)
-                print("Summary Text -------------------", summary_text)
-                
-                # Save messages to database
+                # Save messages to database using the existing chat
                 user_msg = models.Message(chat_id=chat.id, role="user", content=f"Uploaded VCF: {file.filename}")
-                assistant_msg = models.Message(chat_id=chat.id, role="assistant", content=summary_text)
+                assistant_msg = models.Message(chat_id=chat.id, role="assistant", content=result["summary_text"])
                 db.add_all([user_msg, assistant_msg])
                 db.commit()
                 
-                response_text = summary_text
+                response_text = result["summary_text"]
                 last_user_content = f"Uploaded VCF: {file.filename}"
             except Exception as e:
                 print(f"Error in file processing: {str(e)}")
@@ -465,6 +458,16 @@ async def _handle_chat_logic(chat, message, file, db):
                     run_config=run_config
                 )
                 bot_reply = result.final_output or "🤖 (no reply generated)"
+                
+                # Enhance formatting for beautiful output
+                bot_reply = (
+                    f"### 🤖 Assistant Response\n\n"
+                    f"{bot_reply}\n\n"
+                    "---\n"
+                    "**Tips:**\n"
+                    "- You can upload a VCF file for detailed analysis.\n"
+                    "- Ask follow-up questions for more insights! 🧬\n"
+                )
                 
                 print(f"Agent response: {bot_reply}")
                 
@@ -500,8 +503,22 @@ async def _handle_chat_logic(chat, message, file, db):
         # Return the chat history and title
         messages = db.query(models.Message).filter_by(chat_id=chat.id).order_by(models.Message.created_at.asc()).all()
         chat_history = [
-            {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()} for m in messages
+            {
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat(),
+                "formatted_time": m.created_at.strftime('%b %d, %Y %H:%M') if isinstance(m.created_at, datetime.datetime) else str(m.created_at)
+            }
+            for m in messages
         ]
+        # Log the formatted assistant response (text)
+        if response_text:
+            print(f"[LOG] Assistant response (text):\n{response_text}\n---")
+        # Log the formatted VCF summary text
+        if file is not None and response_text:
+            print(f"[LOG] VCF summary text:\n{response_text}\n---")
+        # Log the chat history output
+        print(f"[LOG] Chat history output: {chat_history}")
         return {
             "session_id": str(chat.id),
             "response": response_text,
@@ -514,4 +531,112 @@ async def _handle_chat_logic(chat, message, file, db):
         print(f"Unexpected error in _handle_chat_logic: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="Analysis"):
+    """
+    Unified VCF file processing function to eliminate code duplication.
+    
+    Args:
+        file: UploadFile object
+        db: Database session
+        user: User model instance
+        create_chat: Whether to create a new chat or use existing
+        chat_title_prefix: Prefix for chat title if creating new chat
+    
+    Returns:
+        dict: Contains chat_id, variants_analyzed, results, and summary_text
+    """
+    try:
+        # Validate file
+        if not file.filename.lower().endswith(('.vcf', '.vcf.gz')):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only VCF files are supported"
+            )
+        
+        # Save file
+        file_path = f"uploads/{file.filename}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        print(f"File saved: {file_path}")
+        
+        # Parse VCF file
+        try:
+            variants = parse_vcf_comprehensive(file_path)
+        except Exception as e:
+            print(f"Comprehensive parsing failed, trying basic: {e}")
+            variants = parse_vcf(file_path)
+        
+        if not variants:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid variants found in VCF file"
+            )
+        
+        # Analyze variants
+        print("Calling annotate_with_search...")
+        summaries = await annotate_with_search(variants)
+        print(f"Summaries returned: {len(summaries)}")
+        
+        # Create or get chat for storage
+        chat = None
+        if create_chat:
+            chat = db.query(models.Chat).filter_by(user_id=user.id).order_by(models.Chat.created_at.desc()).first()
+            if not chat:
+                chat = models.Chat(user_id=user.id, title=f"{chat_title_prefix}: {file.filename}")
+                db.add(chat)
+                db.commit()
+                db.refresh(chat)
+        
+        # Store analysis if chat exists
+        if chat:
+            user_msg = models.Message(chat_id=chat.id, role="user", content=f"Analyze file: {file.filename}")
+            db.add(user_msg)
+            
+            summary_text = (
+                "## 🧬 Variant Analysis Summary\n\n"
+                "| Chromosome | Position | Gene | Change | Insight |\n"
+                "|---|---|---|---|---|\n" +
+                "\n".join([
+                    f"| `{v.chromosome}` | `{v.position}` | **{v.gene}** | `{v.reference}`→`{v.alternate}` | {v.search_summary} |"
+                    for v in summaries
+                ]) +
+                "\n\n---\n"
+                "For more details, upload another file or ask a question! 😊"
+            )
+            assistant_msg = models.Message(chat_id=chat.id, role="assistant", content=summary_text)
+            db.add(assistant_msg)
+            db.commit()
+        else:
+            # Create summary text without storing in DB
+            summary_text = (
+                "## 🧬 Variant Analysis Summary\n\n"
+                "| Chromosome | Position | Gene | Change | Insight |\n"
+                "|---|---|---|---|---|\n" +
+                "\n".join([
+                    f"| `{v.chromosome}` | `{v.position}` | **{v.gene}** | `{v.reference}`→`{v.alternate}` | {v.search_summary} |"
+                    for v in summaries
+                ]) +
+                "\n\n---\n"
+                "For more details, upload another file or ask a question! 😊"
+            )
+        
+        return {
+            "chat_id": str(chat.id) if chat else None,
+            "variants_analyzed": len(summaries),
+            "results": [s.model_dump() for s in summaries],
+            "summary_text": summary_text
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in process_vcf_file: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing VCF file: {str(e)}"
+        ) 

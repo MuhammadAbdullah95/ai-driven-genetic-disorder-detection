@@ -27,7 +27,7 @@ from app.routers import auth, chat, message
 from app.routers.auth_utils import get_current_user
 from app.database import SessionLocal, engine
 import app.models as models
-from utils import parse_vcf_comprehensive, parse_vcf, get_agent, annotate_with_search, _handle_chat_logic
+from utils import parse_vcf_comprehensive, parse_vcf, get_agent, annotate_with_search, _handle_chat_logic, process_vcf_file
 from custom_types import VariantInfo
 
 # Load environment variables
@@ -304,6 +304,12 @@ async def chat_endpoint(
         
         # Process the request
         result = await _handle_chat_logic(chat, message, file, db)
+        print("Chat Response-------",ChatResponse(
+            session_id=result["session_id"],
+            response=result["response"],
+            chat_history=result["chat_history"],
+            chat_title=result["chat_title"]
+        ))
         
         return ChatResponse(
             session_id=result["session_id"],
@@ -340,61 +346,14 @@ async def analyze_vcf_endpoint(
     **Response:** Detailed analysis of all variants in the file
     """
     try:
-        # Validate file
-        if not file.filename.lower().endswith(('.vcf', '.vcf.gz')):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only VCF files are supported"
-            )
-        
-        # Save file
-        file_path = f"uploads/{file.filename}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        logger.info(f"File saved: {file_path}")
-        
-        # Parse VCF file
-        try:
-            variants = parse_vcf_comprehensive(file_path)
-        except Exception as e:
-            logger.warning(f"Comprehensive parsing failed, trying basic: {e}")
-            variants = parse_vcf(file_path)
-        
-        if not variants:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid variants found in VCF file"
-            )
-        
-        # Analyze variants
-        summaries = await annotate_with_search(variants)
-        
-        # Create or get chat for storage
-        chat = db.query(models.Chat).filter_by(user_id=user.id).order_by(models.Chat.created_at.desc()).first()
-        if not chat:
-            chat = models.Chat(user_id=user.id, title=f"Analysis: {file.filename}")
-            db.add(chat)
-            db.commit()
-            db.refresh(chat)
-        
-        # Store analysis
-        user_msg = models.Message(chat_id=chat.id, role="user", content=f"Analyze file: {file.filename}")
-        db.add(user_msg)
-        
-        summary_text = "\n".join([
-            f"{v.chromosome}:{v.position} {v.gene} {v.reference}->{v.alternate}: {v.search_summary}" 
-            for v in summaries
-        ])
-        assistant_msg = models.Message(chat_id=chat.id, role="assistant", content=summary_text)
-        db.add(assistant_msg)
-        db.commit()
+        # Use unified VCF processing function
+        result = await process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="Analysis")
         
         return {
             "message": "Analysis complete",
-            "chat_id": str(chat.id),
-            "variants_analyzed": len(summaries),
-            "results": [s.model_dump() for s in summaries]
+            "chat_id": result["chat_id"],
+            "variants_analyzed": result["variants_analyzed"],
+            "results": result["results"]
         }
         
     except HTTPException:

@@ -8,11 +8,20 @@ from agents import Agent, Runner, OpenAIChatCompletionsModel, AsyncOpenAI
 from agents.run import RunConfig
 from tools.google_search_tool import google_search
 from tools.tavily_search_tool import tavily_search
+from utils import _handle_chat_logic
 from typing import Optional
 import shutil
 import os
 
-router = APIRouter(prefix="/chats", tags=["Messages"])
+router = APIRouter(tags=["Messages"])
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable not set")
+
+external_client = AsyncOpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+model = OpenAIChatCompletionsModel(model="gemini-2.5-flash", openai_client=external_client)
+run_config = RunConfig(model=model, model_provider=external_client, tracing_disabled=True)
 
 # DB Dependency
 def get_db():
@@ -23,17 +32,28 @@ def get_db():
         db.close()
 
 def get_agent():
+    """Get the configured agent for genetic disorder detection."""
     return Agent(
         name="Genetic Disorder Detector",
         instructions=(
-            "You are a clinical assistant AI focused on genetic disorders. "
-            "You have access to two tools:\n"
-            "1. 'tavily_search' — for scientific, gene-specific, mutation-level medical information.\n"
-            "2. 'google_search' — for broader context such as symptoms, patient-facing content, and public info.\n"
-            "Use 'tavily_search' first. If the result is weak or empty, try 'google_search'.\n"
-            "Do not search anything unrelated to genetics or medicine.\n\n"
-            "Given variant data and search results, summarize the variant's disease association, clinical relevance, and any reported risks. "
-            "Be concise, accurate, and use non-technical language where possible."
+            "You are a clinical geneticist assistant AI focused on genetic disorders and variant analysis. "
+            "You have access to two search tools:\n"
+            "1. 'tavily_search' — for scientific, gene-specific, mutation-level medical information from databases like ClinVar, OMIM, PubMed.\n"
+            "2. 'google_search' — for broader context such as symptoms, patient-facing content, and public information.\n\n"
+            "IMPORTANT INSTRUCTIONS:\n"
+            "- ALWAYS use the search tools to find information about the genetic variant provided.\n"
+            "- Search for the specific gene name, variant position, and mutation details.\n"
+            "- Look for disease associations, clinical significance, and reported risks.\n"
+            "- Provide detailed, accurate information about the genetic variant's medical implications.\n"
+            "- Use scientific terminology appropriately but explain in accessible language.\n"
+            "- If no specific information is found, search for general information about the gene and its function.\n"
+            "- Do not make up information - only report what you find through searches.\n\n"
+            "When analyzing a variant, provide:\n"
+            "1. Gene function and normal role in the body\n"
+            "2. Disease associations and clinical significance\n"
+            "3. Inheritance patterns if known\n"
+            "4. Available treatments or management strategies\n"
+            "5. Risk assessment and recommendations"
         ),
         tools=[google_search, tavily_search]
     )
@@ -69,7 +89,7 @@ async def handle_agentic_message(chat, message, file, db):
             result = await Runner.run(
                 starting_agent=get_agent(),
                 input=chat_history,
-                run_config=RunConfig(model=None, model_provider=None, tracing_disabled=True)  # Use your config
+                run_config=run_config
             )
             bot_reply = result.final_output or "🤖 (no reply generated)"
         except Exception as e:
@@ -91,7 +111,7 @@ async def handle_agentic_message(chat, message, file, db):
             title_result = await Runner.run(
                 starting_agent=title_rename_agent,
                 input=last_user_content,
-                run_config=RunConfig(model=None, model_provider=None, tracing_disabled=True)  # Use your config
+                run_config=run_config
             )
             new_title = title_result.final_output.strip().replace('"', '')
             chat.title = new_title
@@ -122,7 +142,7 @@ async def send_message(
     chat = db.query(Chat).filter_by(id=chat_id, user_id=user.id).first()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    return await handle_agentic_message(chat, message, file, db)
+    return await _handle_chat_logic(chat, message, file, db)
 
 # Helper for VCF parsing and annotation (reuse from main.py or import if possible)
 def parse_vcf(file_path: str):
@@ -153,7 +173,7 @@ async def annotate_with_search(variants):
     agent = get_agent()
     for var in variants:
         query = f"{var['gene']} gene variant {var['reference']}->{var['alternate']} disease association"
-        result = await Runner.run(agent, input=[{"role": "user", "content": query}], run_config=RunConfig(model=None, model_provider=None, tracing_disabled=True))
+        result = await Runner.run(agent, input=[{"role": "user", "content": query}], run_config=run_config)
         enriched.append({
             "chromosome": var["chromosome"],
             "position": var["position"],
