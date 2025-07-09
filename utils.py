@@ -19,6 +19,10 @@ from tqdm.asyncio import tqdm_asyncio
 import requests
 import mimetypes
 import json
+from google import genai
+from google.genai import types
+
+
 
 CONCURRENCY_LIMIT = 1  # Adjust based on your LLM/search rate limits
 semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
@@ -40,16 +44,18 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-openrouter_external_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+# OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# openrouter_external_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 
 external_client = AsyncOpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
 model = OpenAIChatCompletionsModel(model="gemini-2.0-flash", openai_client=external_client)
-title_renamer_model = OpenAIChatCompletionsModel(model="mistralai/mistral-small-3.2-24b-instruct:free", openai_client=openrouter_external_client)
+# title_renamer_model = OpenAIChatCompletionsModel(model="mistralai/mistral-small-3.2-24b-instruct:free", openai_client=openrouter_external_client)
 run_config = RunConfig(model=model, model_provider=external_client, tracing_disabled=True)
-chat_title_run_config = RunConfig(model=title_renamer_model, model_provider=openrouter_external_client, tracing_disabled=True)
+# chat_title_run_config = RunConfig(model=title_renamer_model, model_provider=openrouter_external_client, tracing_disabled=True)
+
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def parse_vcf_comprehensive(file_path: str) -> List[dict]:
     """
@@ -529,27 +535,38 @@ async def _handle_chat_logic(chat, message, file, db):
                     if response_text:
                         title_input.append({"role": "assistant", "content": response_text})
                     print(f"[ChatTitle] Sending to LLM for title: {title_input}")
-                    response = requests.post(
-                                url=f"https://openrouter.ai/api/v1/chat/completions",
-                                headers={
-                                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                                },
-                                data=json.dumps({
-                                    "model": "mistralai/mistral-small-3.2-24b-instruct:free",
-                                    "messages": [
-                                    {
-                                        "role": "system",
-                                        "content": "Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly.",
-                                    }, 
-                                    {    "role": "user",
-                                        "content": title_input
-                                    }
-                                    ]
-                                })
-                                )
-                    data = response.json()
+                    # response = requests.post(
+                    #             url=f"https://openrouter.ai/api/v1/chat/completions",
+                    #             headers={
+                    #                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    #             },
+                    #             data=json.dumps({
+                    #                 "model": "mistralai/mistral-small-3.2-24b-instruct:free",
+                    #                 "messages": [
+                    #                 {
+                    #                     "role": "system",
+                    #                     "content": "Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly.",
+                    #                 }, 
+                    #                 {    "role": "user",
+                    #                     "content": title_input
+                    #                 }
+                    #                 ]
+                    #             })
+                    #             )
+                    title_input_text = "\n".join(
+                        f"{msg['role'].capitalize()}: {msg['content']}" for msg in title_input
+                    )
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        config=types.GenerateContentConfig(
+                            system_instruction="Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly."),
+                        contents=title_input_text
+                    )
+
+                    print("Tilte response from gemini.... ", response.text)
+                    # data = response.json()
                     # data['choices'][0]['message']['content']
-                    title_result = data['choices'][0]['message']['content']
+                    title_result = response.text
                     # title_result = await Runner.run(
                     #     starting_agent=title_rename_agent,
                     #     input=title_input,
@@ -673,8 +690,19 @@ async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="
             db.commit()
         else:
             summary_text = (
-                f"## 📄 File Analysis Summary\n\n"
-                f"{summaries}\n\n---\nFor more details, upload another file or ask a question! 😊"
+                "## 📄 File Analysis Summary\n\n"
+                "| Chromosome | Position | Gene | Change | Insight |\n"
+                "|---|---|---|---|---|\n" +
+                "\n".join([
+                    f"| `{getattr(v, 'chromosome', getattr(v, 'CHROM', ''))}` "
+                    f"| `{getattr(v, 'position', getattr(v, 'POS', ''))}` "
+                    f"| **{getattr(v, 'gene', getattr(v, 'GENE', ''))}** "
+                    f"| `{getattr(v, 'reference', getattr(v, 'REF', ''))}`→`{getattr(v, 'alternate', getattr(v, 'ALT', ''))}` "
+                    f"| {getattr(v, 'search_summary', '')} |"
+                    for v in summaries
+                ]) +
+                "\n\n---\n"
+                "For more details, upload another file or ask a question! 😊"
             )
         return {
             "chat_id": str(chat.id) if chat else None,
