@@ -11,6 +11,11 @@ export default function HistoryPage() {
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     api.getChats()
@@ -48,11 +53,27 @@ export default function HistoryPage() {
               {chats.map((chat) => (
                 <li
                   key={chat.id}
-                  className={`p-4 bg-white rounded shadow cursor-pointer border ${selectedChat?.id === chat.id ? 'border-primary-500' : 'border-transparent'}`}
+                  className={`p-4 bg-white rounded shadow flex items-center justify-between border ${selectedChat?.id === chat.id ? 'border-primary-500' : 'border-transparent'}`}
                   onClick={() => handleSelectChat(chat)}
                 >
-                  <div className="font-semibold">{chat.title}</div>
-                  <div className="text-xs text-gray-500">{new Date(chat.created_at).toLocaleString()}</div>
+                  <div>
+                    <div className="font-semibold">{chat.title}</div>
+                    <div className="text-xs text-gray-500">{mounted ? new Date(chat.created_at).toLocaleString() : ''}</div>
+                  </div>
+                  <button
+                    className="ml-4 text-red-500 hover:text-red-700 border border-red-500 px-2 py-1 rounded"
+                    title="Delete chat"
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (confirm('Delete this chat?')) {
+                        api.deleteChat(chat.id)
+                          .then(() => setChats(chats => chats.filter(c => c.id !== chat.id)))
+                          .catch(() => alert('Failed to delete chat'));
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
                 </li>
               ))}
             </ul>

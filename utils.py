@@ -3,6 +3,7 @@ from agents.run import RunConfig
 from tools.google_search_tool import google_search
 from tools.tavily_search_tool import tavily_search
 from typing import List, Optional
+from json_convert import extract_json_from_markdown
 import shutil
 from dotenv import load_dotenv
 import os
@@ -13,10 +14,15 @@ import pandas as pd
 from fastapi import status
 import datetime
 import asyncio
+import re
 from tqdm.asyncio import tqdm_asyncio
+import requests
+import mimetypes
+import json
 
-CONCURRENCY_LIMIT = 5  # Adjust based on your LLM/search rate limits
+CONCURRENCY_LIMIT = 1  # Adjust based on your LLM/search rate limits
 semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
 
 # Load environment variables
 load_dotenv()
@@ -34,9 +40,16 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+openrouter_external_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+
 external_client = AsyncOpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
-model = OpenAIChatCompletionsModel(model="gemini-2.5-flash", openai_client=external_client)
+model = OpenAIChatCompletionsModel(model="gemini-2.0-flash", openai_client=external_client)
+title_renamer_model = OpenAIChatCompletionsModel(model="mistralai/mistral-small-3.2-24b-instruct:free", openai_client=openrouter_external_client)
 run_config = RunConfig(model=model, model_provider=external_client, tracing_disabled=True)
+chat_title_run_config = RunConfig(model=title_renamer_model, model_provider=openrouter_external_client, tracing_disabled=True)
 
 def parse_vcf_comprehensive(file_path: str) -> List[dict]:
     """
@@ -333,7 +346,7 @@ def get_agent():
             "- Use scientific terminology appropriately but explain in accessible language.\n"
             "- If no specific information is found, search for general information about the gene and its function.\n"
             "- Do not make up information - only report what you find through searches.\n\n"
-            "When analyzing a variant, provide:\n"
+            "When analyzing a variants, provide:\n"
             "1. Gene function and normal role in the body\n"
             "2. Disease associations and clinical significance\n"
             "3. Inheritance patterns if known\n"
@@ -343,77 +356,88 @@ def get_agent():
         tools=[google_search, tavily_search]
     )
 
-async def annotate_with_search(variants: List[dict]) -> List[VariantInfo]:
-    """Annotate variants using the agent and search tools."""
+async def annotate_with_search(variants: List[dict], user_message: str = None) -> List[VariantInfo]:
+    """Annotate variants safely under rate limits using concurrency control and backoff."""
     try:
-        enriched = []
         agent = get_agent()
-        for i, var in enumerate(variants):
-            print(f"Processing variant {i+1}: {var}")
-            rsid_str = f"- rsID: {var['rsid']}\n" if var.get('rsid') and var['rsid'] not in ('.', '') else ''
-            
-            # Add genotype information if available
-            genotype_str = ""
-            if 'genotypes' in var and var['genotypes']:
-                genotype_str = "\nGENOTYPE DATA:\n"
-                for sample, genotype_data in var['genotypes'].items():
-                    if isinstance(genotype_data, dict):
-                        # New format with genotype and depth
-                        genotype_str += f"- {sample}: {genotype_data['genotype']} (Depth: {genotype_data['depth']})\n"
+
+        async def process_variant(i: int, var: dict) -> VariantInfo:
+            async with semaphore:
+                print(f"Processing variant {i+1}: {var}")
+                rsid_str = f"- rsID: {var['rsid']}\n" if var.get('rsid') and var['rsid'] not in ('.', '') else ''
+
+                genotype_str = ""
+                if 'genotypes' in var and var['genotypes']:
+                    genotype_str = "\nGENOTYPE DATA:\n"
+                    for sample, genotype_data in var['genotypes'].items():
+                        if isinstance(genotype_data, dict):
+                            genotype_str += f"- {sample}: {genotype_data['genotype']} (Depth: {genotype_data['depth']})\n"
+                        else:
+                            genotype_str += f"- {sample}: {genotype_data}\n"
+                    if 'genotype_stats' in var:
+                        genotype_str += f"\nGenotype Statistics: {var['genotype_stats']}\n"
+
+                user_note = f"\n\nUSER NOTE:\n{user_message}\n" if user_message else ""
+
+                query = f"""
+                Analyze this genetic variant and provide comprehensive medical information:
+
+                VARIANT DETAILS:
+                - Gene: {var['gene']}
+                - Chromosome: {var['chromosome']}
+                - Position: {var['position']}
+                - Reference allele: {var['reference']}
+                - Alternate allele: {var['alternate']}
+                {rsid_str}{genotype_str}{user_note}
+                REQUIRED ANALYSIS:
+                1. Search for this specific gene and variant in medical databases
+                2. Find disease associations and clinical significance
+                3. Identify inheritance patterns and risk factors
+                4. Look for treatment options and management strategies
+                5. Provide evidence-based recommendations
+                """
+
+                messages = [
+                    {"role": "system", "content": "You are a clinical geneticist assistant..."},
+                    {"role": "user", "content": query}
+                ]
+
+                await asyncio.sleep(7)  # Respect Gemini 10 RPM free tier
+                try:
+                    result = await Runner.run(agent, input=messages, run_config=run_config)
+                except Exception as e:
+                    if "429" in str(e):
+                        retry_delay = extract_retry_delay(str(e)) or 24
+                        print(f"[429] Rate limit hit. Retrying after {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                        result = await Runner.run(agent, input=messages, run_config=run_config)
                     else:
-                        # Old format (string)
-                        genotype_str += f"- {sample}: {genotype_data}\n"
-                if 'genotype_stats' in var:
-                    genotype_str += f"\nGenotype Statistics: {var['genotype_stats']}\n"
-            
-            # Create a more detailed query for better agent response
-            query = f"""
-            Analyze this genetic variant and provide comprehensive medical information:
-            
-            VARIANT DETAILS:
-            - Gene: {var['gene']}
-            - Chromosome: {var['chromosome']}
-            - Position: {var['position']}
-            - Reference allele: {var['reference']}
-            - Alternate allele: {var['alternate']}
-            {rsid_str}{genotype_str}
-            REQUIRED ANALYSIS:
-            1. Search for this specific gene and variant in medical databases
-            2. Find disease associations and clinical significance
-            3. Identify inheritance patterns and risk factors
-            4. Look for treatment options and management strategies
-            5. Provide evidence-based recommendations
-            
-            Please use your search tools to find accurate, up-to-date information about this genetic variant's medical implications.
-            """
-            print(f"Query for variant {i+1}: {query}")
-            messages = [
-                {"role": "system", "content": "You are a clinical geneticist assistant with expertise in genetic variant analysis. Your role is to analyze genetic variants and provide comprehensive, evidence-based information about disease associations, clinical significance, inheritance patterns, and medical implications. Always use your search tools to find accurate, up-to-date information from medical databases and scientific literature."},
-                {"role": "user", "content": query}
-            ]
-            result = await Runner.run(
-                agent, 
-                input=messages, 
-                run_config=run_config
-            )
-            print(f"Agent response for variant {i+1}: {result.final_output}")
-            enriched.append(VariantInfo(
-                chromosome=var["chromosome"],
-                position=var["position"],
-                rsid=var["rsid"],
-                gene=var["gene"],
-                reference=var["reference"],
-                alternate=var["alternate"],
-                search_summary=result.final_output
-            ))
-        print(f"Annotated {len(enriched)} variants successfully")
+                        raise
+
+                return VariantInfo(
+                    chromosome=var["chromosome"],
+                    position=var["position"],
+                    rsid=var.get("rsid", ""),
+                    gene=var["gene"],
+                    reference=var["reference"],
+                    alternate=var["alternate"],
+                    search_summary=result.final_output
+                )
+
+        tasks = [process_variant(i, var) for i, var in enumerate(variants)]
+        enriched = await tqdm_asyncio.gather(*tasks, desc="Annotating Variants", total=len(tasks))
         return enriched
+
     except Exception as e:
-        print(f"Error in annotate_with_search: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error annotating variants: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Annotation failed: {str(e)}")
+def extract_retry_delay(error_msg: str) -> int:
+    """Extract retry delay in seconds from Gemini 429 error message if available."""
+    match = re.search(r"'retryDelay': '(\d+)s'", error_msg)
+    if match:
+        return int(match.group(1))
+    return None
 async def _handle_chat_logic(chat, message, file, db):
     """Handle chat logic for both text and file input."""
     try:
@@ -424,10 +448,16 @@ async def _handle_chat_logic(chat, message, file, db):
         if file is not None:
             try:
                 # Use unified VCF processing function
-                result = await process_vcf_file(file, db, None, create_chat=False)
+                result = await process_vcf_file(file, db, None, create_chat=False, user_message=message)
                 
                 # Save messages to database using the existing chat
-                user_msg = models.Message(chat_id=chat.id, role="user", content=f"Uploaded VCF: {file.filename}")
+                combined_content = f"Uploaded VCF: {file.filename}"
+                if message and message.strip():
+                    combined_content += f"\n\nUser note:\n{message.strip()}"
+
+                user_msg = models.Message(chat_id=chat.id, role="user", content=combined_content)
+
+                # user_msg = models.Message(chat_id=chat.id, role="user", content=f"Uploaded VCF: {file.filename}")
                 assistant_msg = models.Message(chat_id=chat.id, role="assistant", content=result["summary_text"])
                 db.add_all([user_msg, assistant_msg])
                 db.commit()
@@ -485,20 +515,56 @@ async def _handle_chat_logic(chat, message, file, db):
         if not message and not file:
             raise HTTPException(status_code=400, detail="You must provide either a message or a VCF file.")
 
-        # Auto-generate chat title if needed
+        # Auto-generate chat title if needed, but skip for greetings
+        greetings = {"hi", "hello", "greetings", "hey", "good morning", "good evening", "good afternoon", "yo", "sup", "hola"}
         if chat.title == "New Chat" and last_user_content:
-            try:
-                title_rename_agent = Agent(name="Title renamer", instructions="Generate a short, clear title for this conversation.")
-                title_result = await Runner.run(
-                    starting_agent=title_rename_agent,
-                    input=[{"role": "user", "content": last_user_content}],
-                    run_config=run_config
-                )
-                new_title = title_result.final_output.strip().replace('"', '')
-                chat.title = new_title
-                db.commit()
-            except Exception as e:
-                print(f"[Warning] Failed to auto-generate title: {e}")
+            msg_lower = last_user_content.strip().lower()
+            if msg_lower not in greetings and response_text:
+                try:
+                    # title_rename_agent = Agent(name="Title renamer", instructions="Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly..")
+                    # Pass both user message and assistant response for better context
+                    title_input = []
+                    if last_user_content:
+                        title_input.append({"role": "user", "content": last_user_content})
+                    if response_text:
+                        title_input.append({"role": "assistant", "content": response_text})
+                    print(f"[ChatTitle] Sending to LLM for title: {title_input}")
+                    response = requests.post(
+                                url=f"https://openrouter.ai/api/v1/chat/completions",
+                                headers={
+                                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                                },
+                                data=json.dumps({
+                                    "model": "mistralai/mistral-small-3.2-24b-instruct:free",
+                                    "messages": [
+                                    {
+                                        "role": "system",
+                                        "content": "Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly.",
+                                    }, 
+                                    {    "role": "user",
+                                        "content": title_input
+                                    }
+                                    ]
+                                })
+                                )
+                    data = response.json()
+                    # data['choices'][0]['message']['content']
+                    title_result = data['choices'][0]['message']['content']
+                    # title_result = await Runner.run(
+                    #     starting_agent=title_rename_agent,
+                    #     input=title_input,
+                    #     run_config=chat_title_run_config
+                    # )
+                    print(f"[ChatTitle] LLM raw output: {repr(title_result)}")
+                    new_title = title_result.strip().replace('"', '')
+                    if not new_title:
+                        print("[ChatTitle] LLM returned empty title, using fallback 'Untitled Chat'")
+                        new_title = "Untitled Chat"
+                    chat.title = new_title
+                    db.commit()
+                    print(f"[ChatTitle] Final chat title set: {chat.title}")
+                except Exception as e:
+                    print(f"[ChatTitle][Error] Failed to auto-generate title: {e}")
 
         # Return the chat history and title
         messages = db.query(models.Message).filter_by(chat_id=chat.id).order_by(models.Message.created_at.asc()).all()
@@ -533,53 +599,51 @@ async def _handle_chat_logic(chat, message, file, db):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
-async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="Analysis"):
+async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="Analysis", user_message=None):
     """
-    Unified VCF file processing function to eliminate code duplication.
-    
-    Args:
-        file: UploadFile object
-        db: Database session
-        user: User model instance
-        create_chat: Whether to create a new chat or use existing
-        chat_title_prefix: Prefix for chat title if creating new chat
-    
-    Returns:
-        dict: Contains chat_id, variants_analyzed, results, and summary_text
+    Unified file processing function using Gemini for analysis. All DB/chat logic remains, but VCF parsing/annotation is commented out.
     """
     try:
         # Validate file
-        if not file.filename.lower().endswith(('.vcf', '.vcf.gz')):
+        if not file.filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only VCF files are supported"
+                detail="A file must be provided."
             )
-        
         # Save file
         file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
         print(f"File saved: {file_path}")
+
+        # --- Gemini-based file analysis ---
+
         
-        # Parse VCF file
-        try:
-            variants = parse_vcf_comprehensive(file_path)
-        except Exception as e:
-            print(f"Comprehensive parsing failed, trying basic: {e}")
-            variants = parse_vcf(file_path)
-        
-        if not variants:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid variants found in VCF file"
-            )
-        
-        # Analyze variants
-        print("Calling annotate_with_search...")
-        summaries = await annotate_with_search(variants)
-        print(f"Summaries returned: {len(summaries)}")
-        
+        analysis_result = analyze_file_with_gemini(file_path)
+        # print("Analysis Result from gemini:  ", analysis_result)
+        print(f"Gemini analysis result: {analysis_result}")
+        if analysis_result:
+            try:
+                # Now, parse the cleaned JSON string into a Python list of dictionaries
+                python_data = json.loads(analysis_result)
+
+                print("Successfully extracted and converted JSON string to Python list of dictionaries:")
+                print(python_data)
+
+                # Example: Accessing data
+                print(f"\nFirst variant ID: {python_data[0]['ID']}")
+                print(f"Second variant Gene: {python_data[1]['Gene']}")
+
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON after cleaning: {e}")
+                print(f"Problematic JSON string:\n{analysis_result}")
+            except Exception as e:
+                print(f"An unexpected error occurred during conversion: {e}")
+        else:
+            print("Could not extract valid JSON from the Markdown string.")
+        # Always annotate with Gemini result before branching
+        summaries = await annotate_with_search(python_data, user_message=user_message)
+
         # Create or get chat for storage
         chat = None
         if create_chat:
@@ -589,14 +653,12 @@ async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="
                 db.add(chat)
                 db.commit()
                 db.refresh(chat)
-        
         # Store analysis if chat exists
         if chat:
             user_msg = models.Message(chat_id=chat.id, role="user", content=f"Analyze file: {file.filename}")
             db.add(user_msg)
-            
             summary_text = (
-                "## 🧬 Variant Analysis Summary\n\n"
+               "## 🧬 Variant Analysis Summary\n\n"
                 "| Chromosome | Position | Gene | Change | Insight |\n"
                 "|---|---|---|---|---|\n" +
                 "\n".join([
@@ -610,26 +672,16 @@ async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="
             db.add(assistant_msg)
             db.commit()
         else:
-            # Create summary text without storing in DB
             summary_text = (
-                "## 🧬 Variant Analysis Summary\n\n"
-                "| Chromosome | Position | Gene | Change | Insight |\n"
-                "|---|---|---|---|---|\n" +
-                "\n".join([
-                    f"| `{v.chromosome}` | `{v.position}` | **{v.gene}** | `{v.reference}`→`{v.alternate}` | {v.search_summary} |"
-                    for v in summaries
-                ]) +
-                "\n\n---\n"
-                "For more details, upload another file or ask a question! 😊"
+                f"## 📄 File Analysis Summary\n\n"
+                f"{summaries}\n\n---\nFor more details, upload another file or ask a question! 😊"
             )
-        
         return {
             "chat_id": str(chat.id) if chat else None,
-            "variants_analyzed": len(summaries),
-            "results": [s.model_dump() for s in summaries],
+            "variants_analyzed": None,  # Not applicable
+            "results": None,            # Not applicable
             "summary_text": summary_text
         }
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -638,5 +690,83 @@ async def process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="
         traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing VCF file: {str(e)}"
-        ) 
+            detail=f"Error processing file: {str(e)}"
+        )
+
+def analyze_file_with_gemini(file_path):
+    """
+    Analyzes the content of a given file using the Gemini API.
+    Args:
+        file_path (str): The path to the file to be analyzed.
+    Returns:
+        str: The analysis result from Gemini or an error message.
+    """
+    if not os.path.exists(file_path):
+        return f"Error: File not found at '{file_path}'"
+    mime_type, _ = mimetypes.guess_type(file_path)
+    file_name = os.path.basename(file_path)
+    extracted_content = None
+    # Read file content
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            extracted_content = f.read()
+        is_text_file = True
+    except UnicodeDecodeError:
+        is_text_file = False
+        print(f"Warning: '{file_name}' appears to be a binary file or has a non-UTF-8 encoding. Direct text extraction might be incomplete or fail.")
+        with open(file_path, 'rb') as f:
+            extracted_content = f.read()
+            extracted_content = extracted_content.decode('latin-1', errors='ignore')
+    prompt = ""
+    content_to_send = extracted_content
+    if (mime_type and 'vcf' in mime_type) or file_name.lower().endswith('.vcf'):
+        prompt = "Analyze the following VCF file content and extract all variant information. For each variant, list the chromosome, position, rsid, reference, alternate, gene, and genotypes{'SAMPLE1': '0/1','SAMPLE2': '1/1'} . return the information in pure JSON format. only json no additional text or information like (Here is json file, Gemini analysis etc) only return JSON."
+    elif (mime_type and 'csv' in mime_type) or file_name.lower().endswith('.csv'):
+        prompt = "Parse the following CSV data. List each row and its corresponding columns. If headers are present, use them to label the data. Present as a list of key-value pairs or a table in plain text."
+    elif (mime_type and 'json' in mime_type) or file_name.lower().endswith('.json'):
+        prompt = "Extract all key-value pairs and nested structures from the following JSON data. Present the information as a flat list or a well-indented text representation, focusing on the human-readable content."
+    elif (mime_type and 'xml' in mime_type) or file_name.lower().endswith('.xml'):
+        prompt = "Extract all elements and their attributes/content from the following XML data. Present the information in a clear, readable text format."
+    elif mime_type and mime_type.startswith('text/'):
+        prompt = "Analyze the following text file content and provide a summary of its key information, or extract any structured data you find."
+    else:
+        if is_text_file:
+            prompt = "Analyze the following file content and provide a summary of its key information, or extract any structured data you find."
+        else:
+            return f"File type '{mime_type or 'unknown'}' ({file_name}) is a binary file. For comprehensive analysis, text extraction from binary files (like PDFs, DOCX, XLSX, images for OCR) typically requires specialized Python libraries (e.g., PyPDF2, python-docx, Tesseract) for pre-processing before sending the text to an AI model."
+    if not GEMINI_API_KEY:
+        print("Warning: GEMINI_API_KEY is not set. Please set it as an environment variable or replace the placeholder.")
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": prompt},
+                    {"text": content_to_send}
+                ]
+            }
+        ] 
+    }
+    print(f"Analyzing '{file_name}' (MIME type: {mime_type})...")
+    print(f"Prompting Gemini with: \n{prompt[:100]}...\nContent snippet: \n{content_to_send[:200]}...")
+    try:
+        response = requests.post(api_url, headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        result = response.json()
+        if result and 'candidates' in result and len(result['candidates']) > 0 and \
+           'content' in result['candidates'][0] and 'parts' in result['candidates'][0]['content'] and \
+           len(result['candidates'][0]['content']['parts']) > 0:
+            data_to_json = result['candidates'][0]['content']['parts'][0]['text']
+            print("Gemini data without parsing:::", data_to_json)
+            extracted_json_data = extract_json_from_markdown(data_to_json)
+            return extracted_json_data
+        else:
+            return f"Gemini API did not return expected content. Response structure: {json.dumps(result, indent=2)}"
+    except requests.exceptions.RequestException as e:
+        return f"Error communicating with Gemini API: {e}"
+    except json.JSONDecodeError:
+        return f"Error decoding JSON response from Gemini API: {response.text}"
+    except Exception as e:
+        return f"An unexpected error occurred: {e}" 

@@ -38,3 +38,14 @@ def get_chat(chat_id: int, db: Session = Depends(get_db), user: models.User = De
         raise HTTPException(status_code=404, detail="Chat not found")
 
     return chat
+
+# 🗑️ Delete a chat
+@router.delete("/{chat_id}", status_code=204)
+def delete_chat(chat_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    chat = db.query(models.Chat).filter_by(id=chat_id, user_id=user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    db.delete(chat)
+    db.commit()
+    return None

@@ -114,3 +114,4 @@ if __name__ == "__main__":
         print(f"📊 Total variants processed: {len(variants)}")
     else:
         print("❌ No variants were parsed successfully") 
+
