@@ -16,6 +16,18 @@ function hasMsg(obj: any): obj is { msg: string } {
   return typeof obj === 'object' && obj !== null && 'msg' in obj && typeof obj.msg === 'string';
 }
 
+// Add TypingIndicator component inline
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <div className="w-3 h-3 bg-medical-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+      <div className="w-3 h-3 bg-medical-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+      <div className="w-3 h-3 bg-medical-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+      <span className="ml-2 text-bluegray-400 text-base font-medium">Assistant is typing...</span>
+    </div>
+  );
+}
+
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { theme, toggleTheme } = useTheme();
@@ -27,7 +39,6 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [isTyping, setIsTyping] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -58,10 +69,25 @@ export default function ChatPage() {
     setSelectedFile(null);
   };
 
+  const handleNewDietPlannerChat = async () => {
+    setLoading(true);
+    try {
+      const chat = await api.createDietPlannerChat();
+      setChats(prev => [chat, ...prev]);
+      setSelectedChat(chat);
+      setMessages([]);
+      setInputMessage("");
+      setSelectedFile(null);
+    } catch (error) {
+      console.error('Error creating diet planner chat:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSendMessage = async () => {
     if ((!selectedChat && !inputMessage.trim() && !selectedFile) || (selectedChat && !inputMessage.trim() && !selectedFile)) return;
     setLoading(true);
-    setIsTyping(true); // Start typing animation
     let chat = selectedChat;
     let chatId = chat?.id;
     try {
@@ -79,27 +105,38 @@ export default function ChatPage() {
       };
       setMessages(prev => [...prev, userMsg]);
       setInputMessage("");
-      // Remove the static VCF parsing message and show only the animated typing indicator
-      let response: ChatResponse;
+      // Handle file upload (non-streaming for now)
       if (selectedFile) {
         const formData = new FormData();
         formData.append("file", selectedFile);
-        response = await api.sendMessageWithFile(String(chatId), formData);
+        const response = await api.sendMessageWithFile(String(chatId), formData);
         setSelectedFile(null);
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content:
+              typeof response.response === "string" && response.response.trim()
+                ? response.response
+                : (hasMsg(response.response) ? response.response.msg : JSON.stringify(response.response)),
+            created_at: new Date().toISOString(),
+          },
+        ]);
       } else {
-        response = await api.sendMessage(String(chatId), inputMessage);
+        // Static (non-streaming) text message
+        const response = await api.sendMessage(String(chatId), inputMessage);
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content:
+              typeof response.response === "string" && response.response.trim()
+                ? response.response
+                : (hasMsg(response.response) ? response.response.msg : JSON.stringify(response.response)),
+            created_at: new Date().toISOString(),
+          },
+        ]);
       }
-      setMessages(prev => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            typeof response.response === "string" && response.response.trim()
-              ? response.response
-              : (hasMsg(response.response) ? response.response.msg : JSON.stringify(response.response)),
-          created_at: new Date().toISOString(),
-        },
-      ]);
       api.getChats().then(setChats);
     } catch (error: any) {
       let errorMsg =
@@ -114,10 +151,9 @@ export default function ChatPage() {
           created_at: new Date().toISOString(),
         },
       ]);
-    } finally {
       setLoading(false);
-      setIsTyping(false); // Stop typing animation
     }
+    setLoading(false);
   };
 
   return (
@@ -136,6 +172,7 @@ export default function ChatPage() {
               selectedChatId={selectedChat?.id || null}
               onSelect={handleSelectChat}
               onNewChat={handleNewChat}
+              onNewDietPlannerChat={handleNewDietPlannerChat}
               onDelete={(chatId: string) => {
                 setChats(prev => prev.filter(c => c.id !== chatId));
                 if (selectedChat?.id === chatId) {
@@ -285,6 +322,32 @@ export default function ChatPage() {
                     )}
                   </motion.div>
                 ))}
+                {loading && selectedChat && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex justify-start"
+                  >
+                    <div className="flex-shrink-0 mr-2">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-medical-400 to-medical-600 flex items-center justify-center shadow-lg border-2 border-medical-200 dark:border-medical-500">
+                        <span className="text-xl">
+                          <svg viewBox="0 0 24 24" fill="none" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+                            <ellipse cx="12" cy="12" rx="10" ry="10" fill="#26b6cf" fillOpacity="0.18" />
+                            <path d="M8 18c4-4 4-7 0-12M16 6c-4 4-4 7 0 12" stroke="#009eb2" strokeWidth="1.5" strokeLinecap="round"/>
+                            <path d="M9.5 15c1.5-1.5 4.5-1.5 6 0" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round"/>
+                            <path d="M14.5 9c-1.5 1.5-4.5 1.5-6 0" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round"/>
+                          </svg>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="max-w-2xl w-full break-words px-6 py-4 rounded-xl shadow-lg relative transition-all duration-200 bg-medical-50 dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 font-medium rounded-bl-none mr-auto shadow-medical-400/10 border border-medical-100 dark:border-medical-700 text-lg leading-relaxed">
+                      <TypingIndicator />
+                    </div>
+                  </motion.div>
+                )}
+                {/* Typing indicator removed */}
               </AnimatePresence>
             )
           ) : (
@@ -293,19 +356,6 @@ export default function ChatPage() {
             </div>
           )}
           <div ref={messagesEndRef} />
-          {isTyping && (
-            <div className="flex items-center gap-3 mt-2 animate-fade-in">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-lg animate-pulse">
-                <span className="text-2xl">🤖</span>
-              </div>
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" />
-                <span className="w-2 h-2 bg-primary-500 rounded-full animate-bounce delay-150" />
-                <span className="w-2 h-2 bg-primary-500 rounded-full animate-bounce delay-300" />
-              </div>
-              <span className="text-sm text-gray-400 ml-2">Assistant is thinking...</span>
-            </div>
-          )}
         </div>
         {/* Input Area */}
         <form

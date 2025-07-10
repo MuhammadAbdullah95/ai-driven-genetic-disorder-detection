@@ -362,6 +362,35 @@ def get_agent():
         tools=[google_search, tavily_search]
     )
 
+def get_diet_planner_agent():
+    """Get the configured agent for diet planning."""
+    return Agent(
+        name="Diet Planner Assistant",
+        instructions=(
+            "You are a professional nutritionist and diet planner AI assistant. "
+            "You have access to two search tools:\n"
+            "1. 'tavily_search' — for scientific nutrition research, dietary guidelines, and medical nutrition information.\n"
+            "2. 'google_search' — for current dietary trends, recipes, and practical nutrition advice.\n\n"
+            "IMPORTANT INSTRUCTIONS:\n"
+            "- ALWAYS use the search tools to find current, evidence-based nutrition information.\n"
+            "- Consider individual health conditions, preferences, and dietary restrictions.\n"
+            "- Provide personalized meal plans and dietary recommendations.\n"
+            "- Include nutritional analysis and health benefits of recommended foods.\n"
+            "- Consider cultural preferences and accessibility of ingredients.\n"
+            "- Provide practical cooking tips and meal preparation advice.\n"
+            "- Do not make up information - only report what you find through searches.\n\n"
+            "When creating diet plans, provide:\n"
+            "1. Personalized meal recommendations based on user needs\n"
+            "2. Nutritional breakdown and health benefits\n"
+            "3. Shopping lists and ingredient suggestions\n"
+            "4. Meal preparation tips and cooking instructions\n"
+            "5. Dietary considerations for specific health conditions\n"
+            "6. Alternative options for dietary restrictions\n"
+            "7. Weekly meal planning strategies"
+        ),
+        tools=[google_search, tavily_search]
+    )
+
 async def annotate_with_search(variants: List[dict], user_message: str = None) -> List[VariantInfo]:
     """Annotate variants safely under rate limits using concurrency control and backoff."""
     try:
@@ -488,22 +517,35 @@ async def _handle_chat_logic(chat, message, file, db):
                 
                 print(f"Chat history for agent: {chat_history}")
                 
+                # Choose agent based on chat type
+                if hasattr(chat, 'chat_type') and chat.chat_type == 'diet_planner':
+                    agent = get_diet_planner_agent()
+                    tips_section = (
+                        "---\n"
+                        "**Tips:**\n"
+                        "- Share your dietary preferences and restrictions.\n"
+                        "- Ask for meal plans, recipes, or nutrition advice! 🥗\n"
+                    )
+                else:
+                    agent = get_agent()
+                    tips_section = (
+                        "---\n"
+                        "**Tips:**\n"
+                        "- You can upload a VCF file for detailed analysis.\n"
+                        "- Ask follow-up questions for more insights! 🧬\n"
+                    )
+                
                 result = await Runner.run(
-                    starting_agent=get_agent(),
+                    starting_agent=agent,
                     input=chat_history,
                     run_config=run_config
                 )
                 bot_reply = result.final_output or "🤖 (no reply generated)"
                 
                 # Enhance formatting for beautiful output
-                bot_reply = (
-                    f"### 🤖 Assistant Response\n\n"
-                    f"{bot_reply}\n\n"
-                    "---\n"
-                    "**Tips:**\n"
-                    "- You can upload a VCF file for detailed analysis.\n"
-                    "- Ask follow-up questions for more insights! 🧬\n"
-                )
+                if not bot_reply.strip().startswith("### 🤖 Assistant Response"):
+                    bot_reply = f"### 🤖 Assistant Response\n\n" + bot_reply
+                bot_reply = f"{bot_reply}\n\n{tips_section}"
                 
                 print(f"Agent response: {bot_reply}")
                 

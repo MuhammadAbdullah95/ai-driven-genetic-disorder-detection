@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -295,7 +295,8 @@ async def chat_endpoint(
                 )
         
         if not chat:
-            chat = models.Chat(user_id=user.id, title="New Chat")
+            # Default to genetic chat type for backward compatibility
+            chat = models.Chat(user_id=user.id, title="New Chat", chat_type="genetic")
             db.add(chat)
             db.commit()
             db.refresh(chat)

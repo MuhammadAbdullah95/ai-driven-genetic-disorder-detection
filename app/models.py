@@ -22,6 +22,7 @@ class Chat(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     title = Column(String, default="New Chat")
+    chat_type = Column(String, default="genetic")  # 'genetic' or 'diet_planner'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

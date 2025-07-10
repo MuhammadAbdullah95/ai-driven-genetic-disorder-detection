@@ -7,6 +7,8 @@ A comprehensive FastAPI-based application for analyzing genetic variants and pro
 - **VCF File Analysis**: Upload and analyze VCF files containing genetic variants
 - **AI-Powered Insights**: Get detailed clinical analysis using AI agents
 - **Chat Interface**: Interactive chat sessions for genetic analysis
+- **Streaming Responses**: Real-time streaming chat responses for modern chatbot experience
+- **Diet Planner**: AI-powered nutrition and meal planning assistant
 - **Authentication**: Secure user authentication and session management
 - **Sample Genotype Support**: Handle VCF files with sample genotype data
 - **Comprehensive Parsing**: Support for both standard and complex VCF formats
@@ -19,9 +21,56 @@ A comprehensive FastAPI-based application for analyzing genetic variants and pro
 - [API Documentation](#api-documentation)
 - [Frontend Integration](#frontend-integration)
 - [VCF File Format](#vcf-file-format)
+- [Diet Planner Feature](#diet-planner-feature)
 - [Development](#development)
 - [Deployment](#deployment)
 - [Troubleshooting](#troubleshooting)
+
+## 🥗 Diet Planner Feature
+
+The application now includes an AI-powered Diet Planner that provides personalized nutrition advice and meal planning. 
+
+### Features:
+- **Personalized Meal Plans**: Get customized meal recommendations based on your preferences and dietary restrictions
+- **Nutritional Analysis**: Detailed breakdown of nutrients and health benefits
+- **Recipe Suggestions**: Practical cooking tips and meal preparation advice
+- **Dietary Considerations**: Specialized advice for health conditions and restrictions
+- **Shopping Lists**: Organized ingredient suggestions for meal planning
+
+### How to Use:
+1. Click the "Diet Planner" button in the sidebar
+2. Share your dietary preferences, restrictions, and health goals
+3. Ask for meal plans, recipes, or nutrition advice
+4. Get personalized recommendations with detailed nutritional information
+
+### Chat History:
+- Diet planner conversations are saved separately from genetic analysis chats
+- You can access your diet planning history and continue previous conversations
+- Each chat is clearly labeled with a 🥗 icon for easy identification
+
+## 💬 Streaming Chat Feature
+
+The application now includes real-time streaming responses for a modern chatbot experience.
+
+### Features:
+- **Word-by-Word Streaming**: Responses appear gradually as they are generated
+- **Live Typing Indicator**: Visual feedback showing when the AI is thinking
+- **Real-time Updates**: Chat titles are updated live as conversations progress
+- **Error Handling**: Streaming error messages for better user experience
+- **Server-Sent Events**: Efficient streaming using SSE protocol
+
+### How It Works:
+1. User sends a message
+2. AI response streams word by word in real-time
+3. Typing indicator shows when AI is processing
+4. Chat titles are updated automatically
+5. Complete response is saved to chat history
+
+### Technical Implementation:
+- **Backend**: Server-Sent Events (SSE) streaming endpoint `/chat/stream`
+- **Frontend**: Real-time message updates with smooth animations
+- **Database**: Messages are saved after streaming completion
+- **Error Recovery**: Graceful error handling with user feedback
 
 ## 🛠️ Installation
 
@@ -67,6 +116,11 @@ A comprehensive FastAPI-based application for analyzing genetic variants and pro
    SECRET_KEY=your_secret_key_here
    ALGORITHM=HS256
    ACCESS_TOKEN_EXPIRE_MINUTES=30
+   ```
+
+4. **Run database migration (if upgrading from previous version)**
+   ```bash
+   python migrate_add_chat_type.py
    ```
 
 4. **Set up database**

@@ -11,11 +11,12 @@ interface SidebarProps {
   selectedChatId: string | null;
   onSelect: (chat: Chat) => void;
   onNewChat: () => void;
+  onNewDietPlannerChat: () => void;
   onDelete: (chatId: string) => void;
   onClose?: () => void;
 }
 
-export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, onDelete, onClose }: SidebarProps) {
+export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, onNewDietPlannerChat, onDelete, onClose }: SidebarProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -47,14 +48,25 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
           <ChevronLeft className="h-4 w-4 text-medical-600" />
         </button>
       )}
-      {/* New Chat Button */}
-      <button
-        className="flex items-center gap-2 bg-medical-50 dark:bg-bluegray-800 hover:bg-medical-100 dark:hover:bg-bluegray-700 text-medical-600 dark:text-medical-200 px-5 py-2.5 mt-6 mb-2 mx-6 rounded-lg transition font-semibold active:scale-95 shadow text-base"
-        onClick={onNewChat}
-      >
-        <PlusIcon className="h-5 w-5" />
-        New chat
-      </button>
+      {/* New Chat Buttons */}
+      <div className="px-6 mt-6 mb-2 space-y-2">
+        <button
+          className="flex items-center gap-2 bg-medical-50 dark:bg-bluegray-800 hover:bg-medical-100 dark:hover:bg-bluegray-700 text-medical-600 dark:text-medical-200 px-5 py-2.5 rounded-lg transition font-semibold active:scale-95 shadow text-base w-full"
+          onClick={onNewChat}
+        >
+          <PlusIcon className="h-5 w-5" />
+          New Genetic Chat
+        </button>
+        <button
+          className="flex items-center gap-2 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 text-green-600 dark:text-green-200 px-5 py-2.5 rounded-lg transition font-semibold active:scale-95 shadow text-base w-full"
+          onClick={onNewDietPlannerChat}
+        >
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.5 5M7 13l2.5 5m6-5v6a2 2 0 01-2 2H9a2 2 0 01-2-2v-6m6 0V9a2 2 0 00-2-2H9a2 2 0 00-2 2v4.01" />
+          </svg>
+          Diet Planner
+        </button>
+      </div>
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto px-2 mt-2">
         {chats.length === 0 ? (
@@ -72,7 +84,19 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
                   className={`px-4 py-2 rounded-lg cursor-pointer flex items-center justify-between transition-colors shadow-sm border border-transparent text-base font-medium ${selectedChatId === chat.id ? 'bg-medical-100 dark:bg-bluegray-700 text-medical-700 font-semibold dark:text-medical-100 border-medical-400 dark:border-medical-500' : 'hover:bg-medical-50 dark:hover:bg-bluegray-800 text-bluegray-700/90 dark:text-bluegray-100 hover:font-semibold'}`}
                   onClick={() => onSelect(chat)}
                 >
-                  <span className="truncate">{chat.title}</span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="truncate">{chat.title}</span>
+                    {chat.chat_type === 'diet_planner' && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200 flex-shrink-0">
+                        🥗
+                      </span>
+                    )}
+                    {chat.chat_type === 'genetic' && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 flex-shrink-0">
+                        🧬
+                      </span>
+                    )}
+                  </div>
                   <button
                     className="ml-2 text-alert-400 hover:text-alert-600 px-2 py-1 rounded transition-transform duration-150 active:scale-90"
                     title="Delete chat"

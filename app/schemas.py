@@ -13,19 +13,21 @@ class UserOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # 💬 Chat Schema
 class ChatCreate(BaseModel):
     title: Optional[str] = "New Chat"
+    chat_type: Optional[str] = "genetic"
 
 class ChatOut(BaseModel):
     id: int
     title: str
+    chat_type: str
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # 🧾 Message Schema
 class MessageCreate(BaseModel):
@@ -39,13 +41,14 @@ class MessageOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # 📦 Full Chat with Messages (for frontend resume)
 class ChatWithMessages(BaseModel):
     id: int
     title: str
+    chat_type: str
     messages: List[MessageOut]
 
     class Config:
-        orm_mode = True
+        from_attributes = True

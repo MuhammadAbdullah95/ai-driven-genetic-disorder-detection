@@ -19,7 +19,16 @@ def get_db():
 # 📥 Create a new chat
 @router.post("/", response_model=schemas.ChatOut)
 def create_chat(chat: schemas.ChatCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    new_chat = models.Chat(user_id=user.id, title=chat.title)
+    new_chat = models.Chat(user_id=user.id, title=chat.title, chat_type=chat.chat_type)
+    db.add(new_chat)
+    db.commit()
+    db.refresh(new_chat)
+    return new_chat
+
+# 🥗 Create a new diet planner chat
+@router.post("/diet-planner", response_model=schemas.ChatOut)
+def create_diet_planner_chat(chat: schemas.ChatCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    new_chat = models.Chat(user_id=user.id, title=chat.title or "Diet Planner Chat", chat_type="diet_planner")
     db.add(new_chat)
     db.commit()
     db.refresh(new_chat)

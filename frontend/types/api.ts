@@ -7,6 +7,7 @@ export interface User {
 export interface Chat {
   id: string;
   title: string;
+  chat_type: string;
   created_at: string;
   messages: Message[];
 }

@@ -57,7 +57,19 @@ export default function HistoryPage() {
                   onClick={() => handleSelectChat(chat)}
                 >
                   <div>
-                    <div className="font-semibold">{chat.title}</div>
+                    <div className="font-semibold flex items-center gap-2">
+                      {chat.title}
+                      {chat.chat_type === 'diet_planner' && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          🥗 Diet Planner
+                        </span>
+                      )}
+                      {chat.chat_type === 'genetic' && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          🧬 Genetic
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500">{mounted ? new Date(chat.created_at).toLocaleString() : ''}</div>
                   </div>
                   <button
