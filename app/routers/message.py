@@ -78,5 +78,37 @@ async def send_message(
         raise HTTPException(status_code=404, detail="Chat not found")
     return await _handle_chat_logic(chat, message, file, db)
 
+@router.patch("/message/{message_id}")
+def edit_message(
+    message_id: int,
+    content: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    msg = db.query(Message).filter_by(id=message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.role != "user" or msg.user_id != user.id:
+        raise HTTPException(status_code=403, detail="You can only edit your own messages.")
+    msg.content = content
+    db.commit()
+    db.refresh(msg)
+    return {"success": True, "message": MessageOut.from_orm(msg)}
+
+@router.delete("/message/{message_id}")
+def delete_message(
+    message_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    msg = db.query(Message).filter_by(id=message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.role != "user" or msg.user_id != user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own messages.")
+    db.delete(msg)
+    db.commit()
+    return {"success": True}
+
 # Helper for VCF parsing and annotation (reuse from main.py or import if possible)
 

@@ -40,6 +40,11 @@ export default function ChatPage() {
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
+  // Add state for editing message
+  const [editingMsgIdx, setEditingMsgIdx] = useState<number | null>(null);
+  const [editingMsgValue, setEditingMsgValue] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [deleteLoadingIdx, setDeleteLoadingIdx] = useState<number | null>(null);
 
   useEffect(() => setMounted(true), []);
 
@@ -246,70 +251,147 @@ export default function ChatPage() {
                       </div>
                     )}
                     <div
-                      className={`max-w-2xl w-full break-words px-6 py-4 rounded-xl shadow-lg relative transition-all duration-200
+                      className={`inline-block break-words px-6 py-4 rounded-xl shadow-lg relative transition-all duration-200
                         ${msg.role === "user"
-                          ? "bg-genetic-50 dark:bg-genetic-400/10 text-bluegray-900 dark:text-bluegray-100 rounded-br-none ml-auto shadow-genetic-400/20 border border-genetic-100 dark:border-genetic-400 text-lg font-semibold"
-                          : "bg-medical-50 dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 font-medium rounded-bl-none mr-auto shadow-medical-400/10 border border-medical-100 dark:border-medical-700 text-lg leading-relaxed"}
+                          ? "bg-genetic-50 dark:bg-genetic-400/10 text-bluegray-900 dark:text-bluegray-100 rounded-br-none ml-auto shadow-genetic-400/20 border border-genetic-100 dark:border-genetic-400 text-lg font-semibold max-w-xl"
+                          : "bg-medical-50 dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 font-medium rounded-bl-none mr-auto shadow-medical-400/10 border border-medical-100 dark:border-medical-700 text-lg leading-relaxed max-w-xl"}
                       `}
+                      style={{ maxWidth: '80%', wordBreak: 'break-word' }}
                     >
-                      <div className="text-xs text-bluegray-400 font-medium mb-2 flex items-center gap-1">
-                        {msg.role === "user" ? (
-                          <>
-                            <span className="inline-block w-6 h-6 rounded-full bg-gradient-to-br from-genetic-400 to-genetic-600 flex items-center justify-center shadow-lg mr-1">🧑</span>
-                            You
-                          </>
-                        ) : (
-                          <>Assistant</>
-                        )}
-                        &middot; {mounted ? new Date(msg.created_at).toLocaleString() : ''}
-                      </div>
-                      {/* Message Content with Markdown and type-based coloring */}
-                      {typeof msg.content === "string" ? (
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          className={
-                            `markdown prose prose-lg max-w-none text-bluegray-700/90 dark:text-bluegray-100 leading-relaxed
-                            ${msg.role === 'assistant' ? 'prose-medical dark:prose-invert bg-medical-50 dark:bg-bluegray-900 border border-medical-200 dark:border-medical-700 rounded-xl p-4 shadow-md' : ''}`
-                          }
-                          components={{
-                            h1: ({node, ...props}) => (
-                              <h1 {...props} className="font-bold text-bluegray-900 dark:text-white text-2xl mb-4" />
-                            ),
-                            h2: ({node, ...props}) => (
-                              <h2 {...props} className="font-bold text-bluegray-900 dark:text-white text-xl mb-3" />
-                            ),
-                            h3: ({node, ...props}) => (
-                              <h3 {...props} className="font-semibold text-bluegray-900 dark:text-bluegray-100 text-lg mb-2" />
-                            ),
-                            p: ({node, ...props}) => (
-                              <p {...props} className="mb-3 text-bluegray-700 dark:text-bluegray-100" />
-                            ),
-                            li: ({node, ...props}) => (
-                              <li {...props} className="text-bluegray-700 dark:text-bluegray-100" />
-                            ),
-                            blockquote: ({node, ...props}) => (
-                              <blockquote {...props} className="border-l-4 border-medical-500 pl-4 italic text-bluegray-500 dark:text-bluegray-200 mb-3" />
-                            ),
-                            strong: ({node, ...props}) => (
-                              <strong {...props} className="font-bold text-bluegray-900 dark:text-white" />
-                            ),
-                            table: ({node, ...props}) => (
-                              <table {...props} className="w-full border-collapse border border-medical-300 dark:border-medical-700 my-4" />
-                            ),
-                            th: ({node, ...props}) => (
-                              <th {...props} className="bg-medical-100 dark:bg-bluegray-800 text-medical-700 dark:text-medical-200 border border-medical-300 dark:border-medical-700 px-3 py-2 font-semibold" />
-                            ),
-                            td: ({node, ...props}) => (
-                              <td {...props} className="border border-medical-200 dark:border-medical-700 px-3 py-2" />
-                            ),
-                          }}
-                        >
-                          {msg.content}
-                        </ReactMarkdown>
-                      ) : (msg.content && hasMsg(msg.content as any)) ? (
-                        <span>{(msg.content as any).msg}</span>
+                      {/* Edit/Delete buttons for user messages */}
+                      {msg.role === "user" && (
+                        <div className="absolute top-2 right-2 flex gap-2 z-10">
+                          {/* Edit icon */}
+                          <button className="p-1 rounded hover:bg-blue-100 dark:hover:bg-bluegray-700 transition" title="Edit message"
+                            onClick={() => {
+                              setEditingMsgIdx(idx);
+                              setEditingMsgValue(msg.content);
+                            }}
+                            disabled={editingMsgIdx !== null && editingMsgIdx !== idx || editLoading || deleteLoadingIdx !== null}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-bluegray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L5 12.828a2 2 0 010-2.828L13.586 5.232z" /></svg>
+                          </button>
+                          {/* Delete icon */}
+                          <button className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-700 transition" title="Delete message"
+                            onClick={async () => {
+                              setDeleteLoadingIdx(idx);
+                              try {
+                                await api.deleteMessage(msg.id);
+                                setMessages(prev => prev.filter((_, i) => i !== idx));
+                              } catch (e) {
+                                alert("Failed to delete message.");
+                              }
+                              setDeleteLoadingIdx(null);
+                            }}
+                            disabled={editingMsgIdx !== null || deleteLoadingIdx !== null}
+                          >
+                            {deleteLoadingIdx === idx ? (
+                              <span className="w-4 h-4 animate-spin border-2 border-red-400 border-t-transparent rounded-full inline-block"></span>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                      {/* Inline editing UI */}
+                      {editingMsgIdx === idx ? (
+                        <div className="flex flex-col gap-2">
+                          <input
+                            className="border rounded px-2 py-1 text-bluegray-900 dark:text-bluegray-100 bg-white dark:bg-bluegray-800"
+                            value={editingMsgValue}
+                            onChange={e => setEditingMsgValue(e.target.value)}
+                            autoFocus
+                            disabled={editLoading}
+                          />
+                          <div className="flex gap-2 mt-1">
+                            <button
+                              className="px-3 py-1 rounded bg-medical-500 text-white hover:bg-medical-600"
+                              onClick={async () => {
+                                setEditLoading(true);
+                                try {
+                                  const updated = await api.editMessage(msg.id, editingMsgValue);
+                                  setMessages(prev => prev.map((m, i) => i === idx ? { ...m, content: updated.message.content } : m));
+                                  setEditingMsgIdx(null);
+                                  setEditingMsgValue("");
+                                } catch (e) {
+                                  alert("Failed to edit message.");
+                                }
+                                setEditLoading(false);
+                              }}
+                              disabled={editLoading}
+                            >{editLoading ? "Saving..." : "Save"}</button>
+                            <button
+                              className="px-3 py-1 rounded bg-bluegray-200 dark:bg-bluegray-700 text-bluegray-900 dark:text-bluegray-100 hover:bg-bluegray-300 dark:hover:bg-bluegray-600"
+                              onClick={() => {
+                                setEditingMsgIdx(null);
+                                setEditingMsgValue("");
+                              }}
+                              disabled={editLoading}
+                            >Cancel</button>
+                          </div>
+                        </div>
                       ) : (
-                        <span>{JSON.stringify(msg.content)}</span>
+                        <>
+                          <div className="text-xs text-bluegray-400 font-medium mb-2 flex items-center gap-1">
+                            {msg.role === "user" ? (
+                              <>
+                                <span className="inline-block w-6 h-6 rounded-full bg-gradient-to-br from-genetic-400 to-genetic-600 flex items-center justify-center shadow-lg mr-1">🧑</span>
+                                You
+                              </>
+                            ) : (
+                              <>Assistant</>
+                            )}
+                            &middot; {mounted ? new Date(msg.created_at).toLocaleString() : ''}
+                          </div>
+                          {/* Message Content with Markdown and type-based coloring */}
+                          {typeof msg.content === "string" ? (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              className={
+                                `markdown prose prose-lg max-w-none text-bluegray-700/90 dark:text-bluegray-100 leading-relaxed
+                                ${msg.role === 'assistant' ? 'prose-medical dark:prose-invert bg-medical-50 dark:bg-bluegray-900 border border-medical-200 dark:border-medical-700 rounded-xl p-4 shadow-md' : ''}`
+                              }
+                              components={{
+                                h1: ({node, ...props}) => (
+                                  <h1 {...props} className="font-bold text-bluegray-900 dark:text-white text-2xl mb-4" />
+                                ),
+                                h2: ({node, ...props}) => (
+                                  <h2 {...props} className="font-bold text-bluegray-900 dark:text-white text-xl mb-3" />
+                                ),
+                                h3: ({node, ...props}) => (
+                                  <h3 {...props} className="font-semibold text-bluegray-900 dark:text-bluegray-100 text-lg mb-2" />
+                                ),
+                                p: ({node, ...props}) => (
+                                  <p {...props} className="mb-3 text-bluegray-700 dark:text-bluegray-100" />
+                                ),
+                                li: ({node, ...props}) => (
+                                  <li {...props} className="text-bluegray-700 dark:text-bluegray-100" />
+                                ),
+                                blockquote: ({node, ...props}) => (
+                                  <blockquote {...props} className="border-l-4 border-medical-500 pl-4 italic text-bluegray-500 dark:text-bluegray-200 mb-3" />
+                                ),
+                                strong: ({node, ...props}) => (
+                                  <strong {...props} className="font-bold text-bluegray-900 dark:text-white" />
+                                ),
+                                table: ({node, ...props}) => (
+                                  <table {...props} className="w-full border-collapse border border-medical-300 dark:border-medical-700 my-4" />
+                                ),
+                                th: ({node, ...props}) => (
+                                  <th {...props} className="bg-medical-100 dark:bg-bluegray-800 text-medical-700 dark:text-medical-200 border border-medical-300 dark:border-medical-700 px-3 py-2 font-semibold" />
+                                ),
+                                td: ({node, ...props}) => (
+                                  <td {...props} className="border border-medical-200 dark:border-medical-700 px-3 py-2" />
+                                ),
+                              }}
+                            >
+                              {msg.content}
+                            </ReactMarkdown>
+                          ) : (msg.content && hasMsg(msg.content as any)) ? (
+                            <span>{(msg.content as any).msg}</span>
+                          ) : (
+                            <span>{JSON.stringify(msg.content)}</span>
+                          )}
+                        </>
                       )}
                     </div>
                     {/* User avatar on right */}

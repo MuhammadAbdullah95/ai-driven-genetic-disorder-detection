@@ -20,6 +20,12 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // Chat search state
+  const [search, setSearch] = useState("");
+  const filteredChats = search.trim()
+    ? chats.filter(chat => chat.title.toLowerCase().includes(search.trim().toLowerCase()))
+    : chats;
+
   return (
     <aside className="w-72 bg-white dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 flex flex-col h-full border-r border-medical-100 dark:border-bluegray-800 shadow-md relative">
       {/* App Title */}
@@ -67,14 +73,24 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
           Diet Planner
         </button>
       </div>
+      {/* Chat Search Bar */}
+      <div className="px-6 mb-2">
+        <input
+          type="text"
+          className="w-full px-3 py-2 rounded-lg border border-medical-200 dark:border-bluegray-700 bg-medical-50 dark:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100 placeholder-bluegray-400"
+          placeholder="Search chats..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+      </div>
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto px-2 mt-2">
-        {chats.length === 0 ? (
-          <div className="text-bluegray-400 px-4 py-6">No chats yet.</div>
+        {filteredChats.length === 0 ? (
+          <div className="text-bluegray-400 px-4 py-6">No chats found.</div>
         ) : (
           <ul className="space-y-1 leading-relaxed">
             <AnimatePresence>
-              {chats.map(chat => (
+              {filteredChats.map(chat => (
                 <motion.li
                   key={chat.id}
                   initial={{ opacity: 0, x: -20 }}
