@@ -65,18 +65,18 @@ def get_agent():
 
 
 
-@router.post("/{chat_id}/message")
-async def send_message(
-    chat_id: int = Path(..., description="ID of the chat to send a message to"),
-    message: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user)
-):
-    chat = db.query(Chat).filter_by(id=chat_id, user_id=user.id).first()
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    return await _handle_chat_logic(chat, message, file, db)
+# @router.post("/{chat_id}/message")
+# async def send_message(
+#     chat_id: int = Path(..., description="ID of the chat to send a message to"),
+#     message: Optional[str] = Form(None),
+#     file: Optional[UploadFile] = File(None),
+#     db: Session = Depends(get_db),
+#     user: User = Depends(get_current_user)
+# ):
+#     chat = db.query(Chat).filter_by(id=chat_id, user_id=user.id).first()
+#     if not chat:
+#         raise HTTPException(status_code=404, detail="Chat not found")
+#     return await _handle_chat_logic(chat, message, file, db)
 
 # Helper for VCF parsing and annotation (reuse from main.py or import if possible)
 

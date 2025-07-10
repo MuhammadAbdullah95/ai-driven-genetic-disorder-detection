@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 
 import app.models as models, app.schemas as schemas
 from app.database import SessionLocal
 from .auth_utils import get_current_user
+from app.schemas import MessageCreate, MessageOut
+from utils import _handle_chat_logic
 
 router = APIRouter(tags=["Chats"])
 
@@ -56,5 +58,38 @@ def delete_chat(chat_id: int, db: Session = Depends(get_db), user: models.User =
         raise HTTPException(status_code=404, detail="Chat not found")
 
     db.delete(chat)
+    db.commit()
+    return None
+
+@router.post("/{chat_id}/messages", response_model=dict)
+async def send_message(chat_id: int, message: MessageCreate, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    chat = db.query(models.Chat).filter_by(id=chat_id, user_id=user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return await _handle_chat_logic(chat, message.content, None, db)
+
+@router.post("/{chat_id}/messages/file", response_model=dict)
+async def send_file_message(chat_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    chat = db.query(models.Chat).filter_by(id=chat_id, user_id=user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return await _handle_chat_logic(chat, None, file, db)
+
+@router.patch("/messages/{message_id}", response_model=MessageOut)
+def edit_message(message_id: int, content: dict, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    msg = db.query(models.Message).join(models.Chat).filter(models.Message.id == message_id, models.Chat.user_id == user.id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    msg.content = content['content']
+    db.commit()
+    db.refresh(msg)
+    return msg
+
+@router.delete("/messages/{message_id}", status_code=204)
+def delete_message(message_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    msg = db.query(models.Message).join(models.Chat).filter(models.Message.id == message_id, models.Chat.user_id == user.id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    db.delete(msg)
     db.commit()
     return None
