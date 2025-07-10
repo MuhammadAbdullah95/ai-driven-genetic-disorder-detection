@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [generalError, setGeneralError] = useState("");
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -38,6 +39,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setGeneralError("");
     
     if (!validateForm()) return;
 
@@ -48,13 +50,15 @@ export default function LoginPage() {
       router.push('/');
     } catch (error: any) {
       console.error('Login error:', error);
+      let errorMsg = '';
       if (error.response?.data?.detail) {
-        toast.error(error.response.data.detail);
+        errorMsg = error.response.data.detail;
       } else if (error.message) {
-        toast.error(`Login failed: ${error.message}`);
+        errorMsg = `Login failed: ${error.message}`;
       } else {
-        toast.error('Login failed. Please try again.');
+        errorMsg = 'Login failed. Please try again.';
       }
+      setGeneralError(errorMsg);
       
       // Handle specific error codes
       if (error.response?.status === 401) {
@@ -74,11 +78,6 @@ export default function LoginPage() {
           if (Object.keys(newErrors).length > 0) {
             setErrors(newErrors);
           }
-        } else {
-          // If it's not an array, it might be a string or object
-          toast.error(typeof validationErrors === 'string' 
-            ? validationErrors 
-            : 'Validation failed. Please check your input.');
         }
       }
     } finally {
@@ -93,6 +92,9 @@ export default function LoginPage() {
     // Clear error when user starts typing
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
+    }
+    if (generalError) {
+      setGeneralError("");
     }
   };
 
@@ -110,7 +112,13 @@ export default function LoginPage() {
             Access your genetic analysis dashboard
           </p>
         </div>
-        
+        {/* Persistent general error alert */}
+        {(generalError || errors.email || errors.password) && (
+          <div className="mb-4 p-3 rounded bg-danger-50 border border-danger-200 text-danger-700 flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 text-danger-500" />
+            <span>{generalError || errors.email || errors.password}</span>
+          </div>
+        )}
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-4">
             <div>
