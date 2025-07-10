@@ -45,6 +45,23 @@ export default function ChatPage() {
   const [editingMsgValue, setEditingMsgValue] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [deleteLoadingIdx, setDeleteLoadingIdx] = useState<number | null>(null);
+  // Add user profile dropdown state
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  // Close menu on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    }
+    if (profileMenuOpen) {
+      document.addEventListener('mousedown', handleClick);
+    } else {
+      document.removeEventListener('mousedown', handleClick);
+    }
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [profileMenuOpen]);
 
   useEffect(() => setMounted(true), []);
 
@@ -205,7 +222,7 @@ export default function ChatPage() {
       )}
       <main className={`flex-1 flex flex-col h-full min-h-0 ${!sidebarOpen ? 'px-4 md:px-8' : ''}`}>
         {/* Minimal Transparent Header with Theme Toggle */}
-        <div className="h-12 flex items-center justify-end px-6 pt-4 bg-transparent shadow-none border-none">
+        <div className="h-12 flex items-center justify-end px-6 pt-4 bg-transparent shadow-none border-none relative">
           <button
             onClick={toggleTheme}
             className="p-2 rounded-full border border-medical-300 bg-medical-50 dark:bg-bluegray-800 dark:border-medical-500 hover:bg-medical-100 dark:hover:bg-bluegray-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-medical-400 shadow"
@@ -217,6 +234,28 @@ export default function ChatPage() {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-medical-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12.79A9 9 0 1111.21 3a7 7 0 109.79 9.79z" /></svg>
             )}
           </button>
+          {/* User Profile Icon and Dropdown */}
+          <div className="relative ml-4" ref={profileMenuRef}>
+            <button
+              className="w-10 h-10 rounded-full bg-gradient-to-br from-medical-400 to-medical-600 flex items-center justify-center shadow border-2 border-medical-200 dark:border-medical-500 focus:outline-none focus:ring-2 focus:ring-medical-400"
+              onClick={() => setProfileMenuOpen(v => !v)}
+              aria-label="User menu"
+            >
+              {/* Simple SVG avatar */}
+              <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" fill="#26b6cf" />
+                <ellipse cx="12" cy="10" rx="4" ry="4" fill="#fff" />
+                <ellipse cx="12" cy="17" rx="6" ry="3" fill="#fff" />
+              </svg>
+            </button>
+            {profileMenuOpen && (
+              <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-bluegray-900 border border-medical-200 dark:border-bluegray-700 rounded-lg shadow-lg z-50 py-2 animate-fade-in">
+                <button className="w-full text-left px-4 py-2 hover:bg-medical-100 dark:hover:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100" onClick={() => { setProfileMenuOpen(false); alert('Profile page coming soon!'); }}>Profile</button>
+                <button className="w-full text-left px-4 py-2 hover:bg-medical-100 dark:hover:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100" onClick={() => { setProfileMenuOpen(false); alert('Settings page coming soon!'); }}>Settings</button>
+                <button className="w-full text-left px-4 py-2 hover:bg-alert-100 dark:hover:bg-alert-700 text-alert-600 dark:text-alert-300 border-t border-medical-100 dark:border-bluegray-700" onClick={() => { setProfileMenuOpen(false); api.logout(); }}>Logout</button>
+              </div>
+            )}
+          </div>
         </div>
         {/* Main Chat Area */}
         <div className="flex-1 h-0 overflow-y-auto overflow-x-hidden px-2 py-6 space-y-4 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
