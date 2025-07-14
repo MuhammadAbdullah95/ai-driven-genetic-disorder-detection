@@ -101,6 +101,12 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
+        {/* App Name Branding */}
+        <div className="text-center">
+          <h1 className="text-4xl font-extrabold text-primary-700 tracking-tight drop-shadow mb-2" style={{ fontFamily: 'Nunito, Quicksand, Inter, sans-serif' }}>
+            AI-Driven Early Detection of Genetic Disorders
+          </h1>
+        </div>
         <div>
           <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-primary-100">
             <Dna className="h-8 w-8 text-primary-600" />
