@@ -69,9 +69,16 @@ export default function ChatPage() {
     api.getChats().then(setChats);
   }, []);
 
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [justCreatedChat, setJustCreatedChat] = useState(false);
+
   useEffect(() => {
     if (!selectedChat) return;
-    api.getChat(selectedChat.id).then(chat => setMessages(chat.messages || []));
+    setMessagesLoading(!justCreatedChat);
+    api.getChat(selectedChat.id).then(chat => {
+      setMessages(chat.messages || []);
+      setMessagesLoading(false);
+    });
   }, [selectedChat]);
 
   useEffect(() => {
@@ -82,6 +89,7 @@ export default function ChatPage() {
     setSelectedChat(chat);
     setInputMessage("");
     setSelectedFile(null);
+    setJustCreatedChat(false);
   };
 
   const handleNewChat = () => {
@@ -89,6 +97,7 @@ export default function ChatPage() {
     setMessages([]);
     setInputMessage("");
     setSelectedFile(null);
+    setJustCreatedChat(true);
   };
 
   const handleNewDietPlannerChat = async () => {
@@ -106,6 +115,9 @@ export default function ChatPage() {
       setLoading(false);
     }
   };
+
+  const [fileProcessing, setFileProcessing] = useState(false);
+  const [lastFileUploadTime, setLastFileUploadTime] = useState<number | null>(null);
 
   const handleSendMessage = async () => {
     if ((!selectedChat && !inputMessage.trim() && !selectedFile) || (selectedChat && !inputMessage.trim() && !selectedFile)) return;
@@ -129,21 +141,36 @@ export default function ChatPage() {
       setInputMessage("");
       // Handle file upload (non-streaming for now)
       if (selectedFile) {
+        setFileProcessing(true);
+        setLastFileUploadTime(Date.now());
         const formData = new FormData();
         formData.append("file", selectedFile);
-        const response = await api.sendMessageWithFile(String(chatId), formData);
-        setSelectedFile(null);
+        // Show animated assistant message while waiting
         setMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content:
-              typeof response.response === "string" && response.response.trim()
-                ? response.response
-                : (hasMsg(response.response) ? response.response.msg : JSON.stringify(response.response)),
+            content: "<file-processing>",
             created_at: new Date().toISOString(),
           },
         ]);
+        const response = await api.sendMessageWithFile(String(chatId), formData);
+        setSelectedFile(null);
+        // Poll for assistant response if not immediately present
+        let foundAssistant = false;
+        let pollCount = 0;
+        while (!foundAssistant && pollCount < 30) { // up to ~30s
+          const updatedChat = await api.getChat(String(chatId));
+          setMessages(updatedChat.messages || []);
+          foundAssistant = (updatedChat.messages || []).some(
+            m => m.role === "assistant" && m.created_at && (!lastFileUploadTime || new Date(m.created_at).getTime() > lastFileUploadTime)
+          );
+          if (!foundAssistant) {
+            await new Promise(res => setTimeout(res, 1000));
+            pollCount++;
+          }
+        }
+        setFileProcessing(false);
       } else {
         // Static (non-streaming) text message
         const response = await api.sendMessage(String(chatId), inputMessage);
@@ -178,16 +205,47 @@ export default function ChatPage() {
     setLoading(false);
   };
 
+  const [sidebarWidth, setSidebarWidth] = useState(288); // default width in px
+  const [isResizing, setIsResizing] = useState(false);
+  const sidebarMinWidth = 180;
+  const sidebarMaxWidth = 480;
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [sidebarMinimized, setSidebarMinimized] = useState(false);
+
+  useEffect(() => {
+    function handleMouseMove(e: MouseEvent) {
+      if (!isResizing) return;
+      const newWidth = Math.min(Math.max(e.clientX, sidebarMinWidth), sidebarMaxWidth);
+      setSidebarWidth(newWidth);
+    }
+    function handleMouseUp() {
+      setIsResizing(false);
+    }
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    } else {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
   return (
     <div className="flex h-screen bg-medical-50 dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100">
       <AnimatePresence>
-        {sidebarOpen && (
+        {!sidebarMinimized && sidebarOpen && (
           <motion.div
+            ref={sidebarRef}
+            style={{ width: sidebarWidth, minWidth: sidebarMinWidth, maxWidth: sidebarMaxWidth, transition: isResizing ? 'none' : 'width 0.2s' }}
             initial={{ x: -300, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: -300, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="z-20"
+            className="z-20 h-full relative group"
           >
             <Sidebar
               chats={chats}
@@ -203,23 +261,38 @@ export default function ChatPage() {
                 }
               }}
               onClose={() => setSidebarOpen(false)}
+              minimized={false}
+              onToggleMinimize={() => setSidebarMinimized(true)}
+              width={sidebarWidth}
+            />
+            {/* Drag handle, appears on hover */}
+            <div
+              className="absolute top-0 right-0 h-full w-2 cursor-ew-resize z-30 bg-transparent group-hover:bg-blue-200/30 transition"
+              style={{ userSelect: 'none' }}
+              onMouseDown={() => setIsResizing(true)}
             />
           </motion.div>
         )}
+        {sidebarMinimized && (
+          <Sidebar
+            chats={chats}
+            selectedChatId={selectedChat?.id || null}
+            onSelect={handleSelectChat}
+            onNewChat={handleNewChat}
+            onNewDietPlannerChat={handleNewDietPlannerChat}
+            onDelete={(chatId: string) => {
+              setChats(prev => prev.filter(c => c.id !== chatId));
+              if (selectedChat?.id === chatId) {
+                setSelectedChat(null);
+                setMessages([]);
+              }
+            }}
+            onClose={() => setSidebarOpen(false)}
+            minimized={true}
+            onToggleExpand={() => setSidebarMinimized(false)}
+          />
+        )}
       </AnimatePresence>
-      {!sidebarOpen && (
-        <motion.button
-          initial={{ x: -60, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          exit={{ x: -60, opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          onClick={() => setSidebarOpen(true)}
-          className="absolute top-1/2 -translate-y-1/2 left-3 z-30 p-1.5 bg-white/80 dark:bg-bluegray-800/80 rounded-full shadow-md border border-medical-100 dark:border-bluegray-700 hover:bg-medical-100 dark:hover:bg-bluegray-700 transition focus:outline-none"
-          aria-label="Show sidebar"
-        >
-          <ChevronRight className="h-5 w-5 text-medical-600" />
-        </motion.button>
-      )}
       <main className={`flex-1 flex flex-col h-full min-h-0 ${!sidebarOpen ? 'px-4 md:px-8' : ''}`}>
         {/* Minimal Transparent Header with Theme Toggle */}
         <div className="h-12 flex items-center justify-end px-6 pt-4 bg-transparent shadow-none border-none relative">
@@ -260,7 +333,14 @@ export default function ChatPage() {
         {/* Main Chat Area */}
         <div className="flex-1 h-0 overflow-y-auto overflow-x-hidden px-2 py-6 space-y-4 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
           {selectedChat ? (
-            messages.length === 0 ? (
+            messagesLoading ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-gray-400 text-xl animate-pulse">
+                <div className="w-3/4 h-6 bg-gray-200 rounded mb-4" />
+                <div className="w-2/3 h-6 bg-gray-200 rounded mb-4" />
+                <div className="w-1/2 h-6 bg-gray-200 rounded" />
+                <span className="mt-8">Loading messages...</span>
+              </div>
+            ) : messages.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-gray-500 text-xl">Start the conversation!</div>
             ) : (
               <AnimatePresence>
@@ -297,77 +377,10 @@ export default function ChatPage() {
                       `}
                       style={{ maxWidth: '80%', wordBreak: 'break-word' }}
                     >
-                      {/* Edit/Delete buttons for user messages */}
-                      {msg.role === "user" && (
-                        <div className="absolute top-2 right-2 flex gap-2 z-10">
-                          {/* Edit icon */}
-                          <button className="p-1 rounded hover:bg-blue-100 dark:hover:bg-bluegray-700 transition" title="Edit message"
-                            onClick={() => {
-                              setEditingMsgIdx(idx);
-                              setEditingMsgValue(msg.content);
-                            }}
-                            disabled={editingMsgIdx !== null && editingMsgIdx !== idx || editLoading || deleteLoadingIdx !== null}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-bluegray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L5 12.828a2 2 0 010-2.828L13.586 5.232z" /></svg>
-                          </button>
-                          {/* Delete icon */}
-                          <button className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-700 transition" title="Delete message"
-                            onClick={async () => {
-                              setDeleteLoadingIdx(idx);
-                              try {
-                                await api.deleteMessage(msg.id);
-                                setMessages(prev => prev.filter((_, i) => i !== idx));
-                              } catch (e) {
-                                alert("Failed to delete message.");
-                              }
-                              setDeleteLoadingIdx(null);
-                            }}
-                            disabled={editingMsgIdx !== null || deleteLoadingIdx !== null}
-                          >
-                            {deleteLoadingIdx === idx ? (
-                              <span className="w-4 h-4 animate-spin border-2 border-red-400 border-t-transparent rounded-full inline-block"></span>
-                            ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                            )}
-                          </button>
-                        </div>
-                      )}
-                      {/* Inline editing UI */}
-                      {editingMsgIdx === idx ? (
-                        <div className="flex flex-col gap-2">
-                          <input
-                            className="border rounded px-2 py-1 text-bluegray-900 dark:text-bluegray-100 bg-white dark:bg-bluegray-800"
-                            value={editingMsgValue}
-                            onChange={e => setEditingMsgValue(e.target.value)}
-                            autoFocus
-                            disabled={editLoading}
-                          />
-                          <div className="flex gap-2 mt-1">
-                            <button
-                              className="px-3 py-1 rounded bg-medical-500 text-white hover:bg-medical-600"
-                              onClick={async () => {
-                                setEditLoading(true);
-                                try {
-                                  const updated = await api.editMessage(msg.id, editingMsgValue);
-                                  setMessages(prev => prev.map((m, i) => i === idx ? { ...m, content: updated.message.content } : m));
-                                  setEditingMsgIdx(null);
-                                  setEditingMsgValue("");
-                                } catch (e) {
-                                  alert("Failed to edit message.");
-                                }
-                                setEditLoading(false);
-                              }}
-                              disabled={editLoading}
-                            >{editLoading ? "Saving..." : "Save"}</button>
-                            <button
-                              className="px-3 py-1 rounded bg-bluegray-200 dark:bg-bluegray-700 text-bluegray-900 dark:text-bluegray-100 hover:bg-bluegray-300 dark:hover:bg-bluegray-600"
-                              onClick={() => {
-                                setEditingMsgIdx(null);
-                                setEditingMsgValue("");
-                              }}
-                              disabled={editLoading}
-                            >Cancel</button>
-                          </div>
+                      {msg.content === "<file-processing>" ? (
+                        <div className="flex items-center gap-3 animate-pulse">
+                          <span className="inline-block w-6 h-6 border-4 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+                          <span className="text-bluegray-700 dark:text-bluegray-100 font-semibold">Assistant is analyzing your file and preparing insights. This may take a moment...</span>
                         </div>
                       ) : (
                         <>
@@ -443,7 +456,7 @@ export default function ChatPage() {
                     )}
                   </motion.div>
                 ))}
-                {loading && selectedChat && (
+                {loading && !fileProcessing && selectedChat && (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -451,22 +464,14 @@ export default function ChatPage() {
                     transition={{ duration: 0.2 }}
                     className="flex justify-start"
                   >
-                    <div className="flex-shrink-0 mr-2">
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-medical-400 to-medical-600 flex items-center justify-center shadow-lg border-2 border-medical-200 dark:border-medical-500">
-                        <span className="text-xl">
-                          <svg viewBox="0 0 24 24" fill="none" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
-                            <ellipse cx="12" cy="12" rx="10" ry="10" fill="#26b6cf" fillOpacity="0.18" />
-                            <path d="M8 18c4-4 4-7 0-12M16 6c-4 4-4 7 0 12" stroke="#009eb2" strokeWidth="1.5" strokeLinecap="round"/>
-                            <path d="M9.5 15c1.5-1.5 4.5-1.5 6 0" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round"/>
-                            <path d="M14.5 9c-1.5 1.5-4.5 1.5-6 0" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round"/>
-                          </svg>
-                        </span>
-                      </div>
-                    </div>
-                    <div className="max-w-2xl w-full break-words px-6 py-4 rounded-xl shadow-lg relative transition-all duration-200 bg-medical-50 dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 font-medium rounded-bl-none mr-auto shadow-medical-400/10 border border-medical-100 dark:border-medical-700 text-lg leading-relaxed">
                       <TypingIndicator />
-                    </div>
                   </motion.div>
+                )}
+                {fileProcessing && (
+                  <div className="flex items-center gap-3 animate-pulse my-4">
+                    <span className="inline-block w-6 h-6 border-4 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+                    <span className="text-bluegray-700 dark:text-bluegray-100 font-semibold">Assistant is analyzing your file and preparing insights. This may take a moment...</span>
+                  </div>
                 )}
                 {/* Typing indicator removed */}
               </AnimatePresence>

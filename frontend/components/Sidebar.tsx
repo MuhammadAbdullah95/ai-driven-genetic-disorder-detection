@@ -14,20 +14,26 @@ interface SidebarProps {
   onNewDietPlannerChat: () => void;
   onDelete: (chatId: string) => void;
   onClose?: () => void;
+  width?: number;
 }
 
-export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, onNewDietPlannerChat, onDelete, onClose }: SidebarProps) {
+export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, onNewDietPlannerChat, onDelete, onClose, width }: SidebarProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
+  const [deletedChats, setDeletedChats] = useState<string[]>([]);
   // Chat search state
   const [search, setSearch] = useState("");
   const filteredChats = search.trim()
     ? chats.filter(chat => chat.title.toLowerCase().includes(search.trim().toLowerCase()))
     : chats;
+  // Optimistically filter out deleted chats
+  const visibleChats = filteredChats.filter(chat => !deletedChats.includes(chat.id));
 
   return (
-    <aside className="w-72 bg-white dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 flex flex-col h-full border-r border-medical-100 dark:border-bluegray-800 shadow-md relative">
+    <aside className="bg-white dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100 flex flex-col h-full border-r border-medical-100 dark:border-bluegray-800 shadow-md relative"
+      style={width ? { width } : {}}>
       {/* App Title */}
       <div className="flex items-center gap-3 justify-between px-6 py-6 border-b border-medical-100 dark:border-bluegray-800 relative">
         <span className="flex items-center gap-3 font-bold text-2xl tracking-wide">
@@ -85,12 +91,12 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
       </div>
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto px-2 mt-2">
-        {filteredChats.length === 0 ? (
+        {visibleChats.length === 0 ? (
           <div className="text-bluegray-400 px-4 py-6">No chats found.</div>
         ) : (
           <ul className="space-y-1 leading-relaxed">
             <AnimatePresence>
-              {filteredChats.map(chat => (
+              {visibleChats.map(chat => (
                 <motion.li
                   key={chat.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -119,14 +125,19 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
                     onClick={async (e) => {
                       e.stopPropagation();
                       if (confirm('Delete this chat?')) {
+                        setDeletingChatId(chat.id);
+                        setDeletedChats(prev => [...prev, chat.id]);
                         try {
                           await api.deleteChat(chat.id);
                           onDelete(chat.id);
                         } catch {
                           alert('Failed to delete chat');
+                          setDeletedChats(prev => prev.filter(id => id !== chat.id));
                         }
+                        setDeletingChatId(null);
                       }
                     }}
+                    disabled={deletingChatId === chat.id}
                   >
                     <TrashIcon className="h-5 w-5" />
                   </button>

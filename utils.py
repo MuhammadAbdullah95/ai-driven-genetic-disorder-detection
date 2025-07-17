@@ -565,36 +565,16 @@ async def _handle_chat_logic(chat, message, file, db):
 
         # Auto-generate chat title if needed, but skip for greetings
         greetings = {"hi", "hello", "greetings", "hey", "good morning", "good evening", "good afternoon", "yo", "sup", "hola"}
-        if chat.title == "New Chat" and last_user_content:
+        if chat.title == "New Chat" or chat.title == "Diet Planner Chat" and last_user_content:
             msg_lower = last_user_content.strip().lower()
             if msg_lower not in greetings and response_text:
                 try:
-                    # title_rename_agent = Agent(name="Title renamer", instructions="Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly..")
-                    # Pass both user message and assistant response for better context
                     title_input = []
                     if last_user_content:
                         title_input.append({"role": "user", "content": last_user_content})
                     if response_text:
                         title_input.append({"role": "assistant", "content": response_text})
                     print(f"[ChatTitle] Sending to LLM for title: {title_input}")
-                    # response = requests.post(
-                    #             url=f"https://openrouter.ai/api/v1/chat/completions",
-                    #             headers={
-                    #                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    #             },
-                    #             data=json.dumps({
-                    #                 "model": "mistralai/mistral-small-3.2-24b-instruct:free",
-                    #                 "messages": [
-                    #                 {
-                    #                     "role": "system",
-                    #                     "content": "Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly.",
-                    #                 }, 
-                    #                 {    "role": "user",
-                    #                     "content": title_input
-                    #                 }
-                    #                 ]
-                    #             })
-                    #             )
                     title_input_text = "\n".join(
                         f"{msg['role'].capitalize()}: {msg['content']}" for msg in title_input
                     )
@@ -604,16 +584,8 @@ async def _handle_chat_logic(chat, message, file, db):
                             system_instruction="Based on the entire conversation content, generate a short, clear, and context-aware title that summarizes the main purpose or topic of the discussion. The title should be concise (3–8 words), informative, and user-friendly."),
                         contents=title_input_text
                     )
-
                     print("Tilte response from gemini.... ", response.text)
-                    # data = response.json()
-                    # data['choices'][0]['message']['content']
                     title_result = response.text
-                    # title_result = await Runner.run(
-                    #     starting_agent=title_rename_agent,
-                    #     input=title_input,
-                    #     run_config=chat_title_run_config
-                    # )
                     print(f"[ChatTitle] LLM raw output: {repr(title_result)}")
                     new_title = title_result.strip().replace('"', '')
                     if not new_title:
