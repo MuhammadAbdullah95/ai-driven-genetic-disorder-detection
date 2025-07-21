@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { TrashIcon, PlusIcon } from "@heroicons/react/24/outline";
 import { useState, useEffect } from 'react';
 import { ChevronLeft } from 'lucide-react';
+import Link from 'next/link';
 
 interface SidebarProps {
   chats: Chat[];
@@ -12,12 +13,16 @@ interface SidebarProps {
   onSelect: (chat: Chat) => void;
   onNewChat: () => void;
   onNewDietPlannerChat: () => void;
+  onNewBloodReportAnalyzerChat: () => void;
   onDelete: (chatId: string) => void;
   onClose?: () => void;
   width?: number;
+  minimized: boolean;
+  onToggleMinimize?: () => void;
+  onToggleExpand?: () => void;
 }
 
-export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, onNewDietPlannerChat, onDelete, onClose, width }: SidebarProps) {
+export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, onNewDietPlannerChat, onNewBloodReportAnalyzerChat, onDelete, onClose, width }: SidebarProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -78,6 +83,13 @@ export default function Sidebar({ chats, selectedChatId, onSelect, onNewChat, on
           </svg>
           Diet Planner
         </button>
+        <Link href="/analyze/blood-report" className="flex items-center gap-2 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-200 px-5 py-2.5 rounded-lg transition font-semibold active:scale-95 shadow text-base w-full">
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3C12 3 7 8.5 7 13a5 5 0 0010 0c0-4.5-5-10-5-10z" />
+            <circle cx="12" cy="17" r="2" fill="currentColor" />
+          </svg>
+          Blood Report Analyzer
+        </Link>
       </div>
       {/* Chat Search Bar */}
       <div className="px-6 mb-2">

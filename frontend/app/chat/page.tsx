@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
-import { Chat, Message, ChatResponse } from "@/types/api";
+import { Chat, Message, ChatResponse, BloodReportAnalysisResponse } from "@/types/api";
 import FileUpload from "@/components/FileUpload";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -234,6 +234,48 @@ export default function ChatPage() {
     };
   }, [isResizing]);
 
+  const [bloodReportModalOpen, setBloodReportModalOpen] = useState(false);
+  const [bloodReportFile, setBloodReportFile] = useState<File | null>(null);
+  const [bloodReportNote, setBloodReportNote] = useState("");
+  const [bloodReportLoading, setBloodReportLoading] = useState(false);
+
+  // Handler for new blood report analyzer chat
+  const handleNewBloodReportAnalyzerChat = () => {
+    setBloodReportModalOpen(true);
+    setBloodReportFile(null);
+    setBloodReportNote("");
+  };
+
+  // Handler for submitting blood report analysis
+  const handleSubmitBloodReport = async () => {
+    if (!bloodReportFile) return;
+    setBloodReportLoading(true);
+    try {
+      const result: BloodReportAnalysisResponse = await api.analyzeBloodReport(bloodReportFile, bloodReportNote);
+      // Create a new chat object for sidebar/history
+      const newChat = {
+        id: result.chat_id ? String(result.chat_id) : `blood_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        title: "Blood Report Analysis",
+        chat_type: "blood_report",
+        created_at: new Date().toISOString(),
+        messages: [
+          { role: "user" as const, content: `Uploaded blood report: ${bloodReportFile.name}${bloodReportNote ? `\n\nNote: ${bloodReportNote}` : ""}`, created_at: new Date().toISOString() },
+          { role: "assistant" as const, content: result.summary_text, created_at: new Date().toISOString() },
+        ],
+      };
+      setChats(prev => [newChat, ...prev]);
+      setSelectedChat(newChat);
+      setMessages(newChat.messages);
+      setBloodReportModalOpen(false);
+      setBloodReportFile(null);
+      setBloodReportNote("");
+    } catch (error: any) {
+      alert(error?.response?.data?.detail || error.message || "Failed to analyze blood report");
+    } finally {
+      setBloodReportLoading(false);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-medical-50 dark:bg-bluegray-900 text-bluegray-900 dark:text-bluegray-100">
       <AnimatePresence>
@@ -253,6 +295,7 @@ export default function ChatPage() {
               onSelect={handleSelectChat}
               onNewChat={handleNewChat}
               onNewDietPlannerChat={handleNewDietPlannerChat}
+              onNewBloodReportAnalyzerChat={handleNewBloodReportAnalyzerChat}
               onDelete={(chatId: string) => {
                 setChats(prev => prev.filter(c => c.id !== chatId));
                 if (selectedChat?.id === chatId) {
@@ -280,6 +323,7 @@ export default function ChatPage() {
             onSelect={handleSelectChat}
             onNewChat={handleNewChat}
             onNewDietPlannerChat={handleNewDietPlannerChat}
+            onNewBloodReportAnalyzerChat={handleNewBloodReportAnalyzerChat}
             onDelete={(chatId: string) => {
               setChats(prev => prev.filter(c => c.id !== chatId));
               if (selectedChat?.id === chatId) {
@@ -293,6 +337,55 @@ export default function ChatPage() {
           />
         )}
       </AnimatePresence>
+      {/* Blood Report Modal */}
+      {bloodReportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white dark:bg-bluegray-900 rounded-xl shadow-lg p-8 w-full max-w-md relative">
+            <button
+              className="absolute top-3 right-3 text-bluegray-400 hover:text-red-500 text-xl font-bold"
+              onClick={() => setBloodReportModalOpen(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <h2 className="text-2xl font-bold mb-4 text-red-600 flex items-center gap-2">
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3C12 3 7 8.5 7 13a5 5 0 0010 0c0-4.5-5-10-5-10z" />
+                <circle cx="12" cy="17" r="2" fill="currentColor" />
+              </svg>
+              Blood Report Analyzer
+            </h2>
+            <div className="mb-4">
+              <label className="block font-medium mb-1">Upload Blood Report Image or PDF</label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={e => setBloodReportFile(e.target.files?.[0] || null)}
+                className="block w-full border border-medical-200 rounded-lg px-3 py-2 bg-medical-50 dark:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100"
+                disabled={bloodReportLoading}
+              />
+            </div>
+            <div className="mb-4">
+              <label className="block font-medium mb-1">Optional Note</label>
+              <textarea
+                value={bloodReportNote}
+                onChange={e => setBloodReportNote(e.target.value)}
+                className="block w-full border border-medical-200 rounded-lg px-3 py-2 bg-medical-50 dark:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100"
+                rows={3}
+                placeholder="Add any notes or context for the analysis..."
+                disabled={bloodReportLoading}
+              />
+            </div>
+            <button
+              className="w-full py-3 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-lg transition disabled:opacity-50"
+              onClick={handleSubmitBloodReport}
+              disabled={!bloodReportFile || bloodReportLoading}
+            >
+              {bloodReportLoading ? "Analyzing..." : "Analyze Blood Report"}
+            </button>
+          </div>
+        </div>
+      )}
       <main className={`flex-1 flex flex-col h-full min-h-0 ${!sidebarOpen ? 'px-4 md:px-8' : ''}`}>
         {/* Minimal Transparent Header with Theme Toggle */}
         <div className="h-12 flex items-center justify-end px-6 pt-4 bg-transparent shadow-none border-none relative">
@@ -484,43 +577,45 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
         {/* Input Area */}
-        <form
-          className="p-6 border-t border-medical-100 dark:border-bluegray-800 flex justify-center bg-transparent"
-          onSubmit={e => {
-            e.preventDefault();
-            handleSendMessage();
-          }}
-        >
-          <div className="flex items-center gap-2 w-full max-w-xl mx-auto bg-white/95 dark:bg-bluegray-800 rounded-2xl shadow px-4 py-2">
-            <FileUpload
-              onFileSelect={setSelectedFile}
-              onFileRemove={() => setSelectedFile(null)}
-              selectedFile={selectedFile}
-              className="mr-2"
-            />
-            <input
-              type="text"
-              className="flex-1 bg-transparent border-none outline-none text-lg font-normal text-bluegray-900 dark:text-bluegray-100 placeholder-bluegray-400 placeholder:font-normal"
-              placeholder="Ask anything..."
-              value={inputMessage}
-              onChange={e => setInputMessage(e.target.value)}
-              disabled={loading}
-            />
-            <button
-              type="submit"
-              className="flex-shrink-0 w-10 h-10 rounded-full bg-medical-500 hover:bg-medical-600 text-white flex items-center justify-center shadow focus:outline-none focus:ring-2 focus:ring-medical-400 disabled:opacity-50 transition-transform duration-150 active:scale-95 text-lg"
-              disabled={loading || (!inputMessage.trim() && !selectedFile)}
-            >
-              {loading ? (
-                <span className="text-base font-medium">...</span>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-5 w-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </form>
+        {selectedChat?.chat_type !== 'blood_report' && (
+          <form
+            className="p-6 border-t border-medical-100 dark:border-bluegray-800 flex justify-center bg-transparent"
+            onSubmit={e => {
+              e.preventDefault();
+              handleSendMessage();
+            }}
+          >
+            <div className="flex items-center gap-2 w-full max-w-xl mx-auto bg-white/95 dark:bg-bluegray-800 rounded-2xl shadow px-4 py-2">
+              <FileUpload
+                onFileSelect={setSelectedFile}
+                onFileRemove={() => setSelectedFile(null)}
+                selectedFile={selectedFile}
+                className="mr-2"
+              />
+              <input
+                type="text"
+                className="flex-1 bg-transparent border-none outline-none text-lg font-normal text-bluegray-900 dark:text-bluegray-100 placeholder-bluegray-400 placeholder:font-normal"
+                placeholder="Ask anything..."
+                value={inputMessage}
+                onChange={e => setInputMessage(e.target.value)}
+                disabled={loading}
+              />
+              <button
+                type="submit"
+                className="flex-shrink-0 w-10 h-10 rounded-full bg-medical-500 hover:bg-medical-600 text-white flex items-center justify-center shadow focus:outline-none focus:ring-2 focus:ring-medical-400 disabled:opacity-50 transition-transform duration-150 active:scale-95 text-lg"
+                disabled={loading || (!inputMessage.trim() && !selectedFile)}
+              >
+                {loading ? (
+                  <span className="text-base font-medium">...</span>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-5 w-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </form>
+        )}
       </main>
     </div>
   );

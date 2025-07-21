@@ -71,4 +71,11 @@ export interface LoginRequest {
 export interface RegisterRequest {
   email: string;
   password: string;
-} 
+}
+
+export interface BloodReportAnalysisResponse {
+  chat_id?: string;
+  summary_text: string;
+  structured_data: Record<string, any>;
+  interpretation: string;
+}

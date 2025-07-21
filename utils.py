@@ -2,7 +2,7 @@ from agents import Agent, Runner, AsyncOpenAI, OpenAIChatCompletionsModel
 from agents.run import RunConfig
 from tools.google_search_tool import google_search
 from tools.tavily_search_tool import tavily_search
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from json_convert import extract_json_from_markdown
 import shutil
 from dotenv import load_dotenv
@@ -21,6 +21,13 @@ import mimetypes
 import json
 from google import genai
 from google.genai import types
+import os
+import shutil
+import pathlib
+from fastapi import HTTPException, status
+# from google.generativeai import types
+from PIL import Image # Import Pillow for image handling
+import io # For handling image bytes
 
 
 
@@ -57,261 +64,6 @@ run_config = RunConfig(model=model, model_provider=external_client, tracing_disa
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-def parse_vcf_comprehensive(file_path: str) -> List[dict]:
-    """
-    Comprehensive VCF parser using pandas that handles both standard fields and sample genotype data.
-    Updated to properly handle the sample VCF format with proper column names and genotype parsing.
-    """
-    try:
-        print(f"Parsing VCF comprehensively with pandas: {file_path}")
-        
-        # Find the header line (starts with #CHROM)
-        with open(file_path) as f:
-            for i, line in enumerate(f):
-                if line.startswith("#CHROM"):
-                    header_line = i
-                    break
-            else:
-                raise ValueError("No #CHROM header found in VCF file.")
-        
-        # Read the VCF into a DataFrame with all columns
-        df = pd.read_csv(
-            file_path,
-            sep='\t',
-            comment='#',
-            header=None,
-            skiprows=header_line
-        )
-        
-        print(f"VCF DataFrame shape: {df.shape}")
-        print(f"VCF DataFrame columns: {len(df.columns)}")
-        
-        # Determine column structure based on the sample VCF format
-        if len(df.columns) >= 8:
-            # Standard VCF columns
-            standard_cols = ["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]
-            
-            # If we have more columns, they are FORMAT + sample columns
-            if len(df.columns) > 8:
-                format_col = "FORMAT"
-                # For the sample VCF, we have exactly one sample column named "SAMPLE1"
-                sample_cols = ["SAMPLE1"] if len(df.columns) == 10 else [f"SAMPLE_{i}" for i in range(len(df.columns) - 9)]
-                all_cols = standard_cols + [format_col] + sample_cols
-                print(f"Detected {len(sample_cols)} sample columns: {sample_cols}")
-            else:
-                all_cols = standard_cols
-                format_col = None
-                sample_cols = []
-            
-            # Set column names
-            df.columns = all_cols[:len(df.columns)]
-            print(f"Column names: {list(df.columns)}")
-            
-            # Parse variants
-            results = []
-            for idx, row in df.iterrows():
-                # Extract standard fields
-                gene = "Unknown"
-                info_str = str(row["INFO"])
-                if not pd.isna(info_str) and info_str != 'nan':
-                    # Try to extract gene from various INFO field formats
-                    for entry in info_str.split(";"):
-                        if entry.startswith("GENE="):
-                            gene = entry.split("=", 1)[1]
-                            break
-                        # For the sample VCF, we don't have GENE field, so keep as "Unknown"
-                
-                # Handle NaN values
-                pos = row["POS"]
-                if pd.isna(pos):
-                    print(f"Warning: Skipping variant with NaN position at row {idx}")
-                    continue
-                
-                variant = {
-                    "chromosome": str(row["CHROM"]),
-                    "position": int(pos),
-                    "rsid": str(row["ID"]) if not pd.isna(row["ID"]) else ".",
-                    "gene": gene,
-                    "reference": str(row["REF"]) if not pd.isna(row["REF"]) else ".",
-                    "alternate": str(row["ALT"]) if not pd.isna(row["ALT"]) else ".",
-                    "quality": str(row["QUAL"]) if not pd.isna(row["QUAL"]) else ".",
-                    "filter": str(row["FILTER"]) if not pd.isna(row["FILTER"]) else ".",
-                    "info": info_str,
-                }
-                
-                # Extract genotype data if available
-                if format_col and format_col in df.columns:
-                    format_str = str(row[format_col]) if not pd.isna(row[format_col]) else ""
-                    variant["format"] = format_str
-                    
-                    # Parse sample genotypes
-                    genotypes = {}
-                    for sample_col in sample_cols:
-                        if sample_col in df.columns:
-                            sample_data = str(row[sample_col]) if not pd.isna(row[sample_col]) else "./."
-                            # Extract genotype (first part before ':') and depth
-                            if ':' in sample_data:
-                                parts = sample_data.split(':')
-                                genotype = parts[0]  # GT part (e.g., "0/1")
-                                depth = parts[1] if len(parts) > 1 else "0"  # DP part (e.g., "20")
-                                genotypes[sample_col] = {
-                                    "genotype": genotype,
-                                    "depth": depth,
-                                    "raw": sample_data
-                                }
-                            else:
-                                genotypes[sample_col] = {
-                                    "genotype": sample_data,
-                                    "depth": "0",
-                                    "raw": sample_data
-                                }
-                    
-                    variant["genotypes"] = genotypes
-                    
-                    # Calculate genotype statistics
-                    if genotypes:
-                        genotype_counts = {}
-                        for sample_data in genotypes.values():
-                            gt = sample_data["genotype"]
-                            genotype_counts[gt] = genotype_counts.get(gt, 0) + 1
-                        variant["genotype_stats"] = genotype_counts
-                
-                results.append(variant)
-                print(f"Parsed variant {idx+1}: {variant['chromosome']}:{variant['position']} {variant['gene']} - Genotypes: {variant.get('genotypes', {})}")
-            
-            print(f"Comprehensive parsing completed. Total variants found: {len(results)}")
-            return results
-        else:
-            raise ValueError(f"VCF file has insufficient columns: {len(df.columns)} (need at least 8)")
-            
-    except Exception as e:
-        print(f"Error in comprehensive VCF parsing: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        print("Falling back to basic parsing...")
-        return parse_vcf(file_path)
-
-def parse_vcf(file_path: str) -> List[dict]:
-    """Parse a VCF file using pandas, extracting key fields and gene info. Fallback to manual parsing if pandas fails."""
-    try:
-        print(f"Parsing VCF file with pandas: {file_path}")
-        # Find the header line (starts with #CHROM)
-        with open(file_path) as f:
-            for i, line in enumerate(f):
-                if line.startswith("#CHROM"):
-                    header_line = i
-                    break
-            else:
-                raise ValueError("No #CHROM header found in VCF file.")
-        
-        # Try tab-separated first, then space-separated
-        for separator in ['\t', ' ']:
-            try:
-                print(f"Trying separator: {repr(separator)}")
-                df = pd.read_csv(
-                    file_path,
-                    sep=separator,
-                    comment='#',
-                    header=None,
-                    skiprows=header_line,
-                    names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"],
-                    skipinitialspace=True
-                )
-                
-                # Check if we got the right number of columns
-                if len(df.columns) >= 8:
-                    print(f"Successfully parsed with separator: {repr(separator)}")
-                    break
-            except Exception as e:
-                print(f"Failed with separator {repr(separator)}: {e}")
-                continue
-        else:
-            raise ValueError("Could not parse VCF with any separator")
-        
-        results = []
-        for _, row in df.iterrows():
-            # Handle NaN values
-            pos = row["POS"]
-            if pd.isna(pos):
-                print(f"Warning: Skipping variant with NaN position: {row}")
-                continue
-                
-            gene = "Unknown"
-            info_str = str(row["INFO"])
-            if not pd.isna(info_str) and info_str != 'nan':
-                for entry in info_str.split(";"):
-                    if entry.startswith("GENE="):
-                        gene = entry.split("=", 1)[1]
-                        break
-            
-            results.append({
-                "chromosome": str(row["CHROM"]),
-                "position": int(pos),
-                "rsid": str(row["ID"]) if not pd.isna(row["ID"]) else ".",
-                "gene": gene,
-                "reference": str(row["REF"]) if not pd.isna(row["REF"]) else ".",
-                "alternate": str(row["ALT"]) if not pd.isna(row["ALT"]) else ".",
-            })
-        print(f"Parsed {len(results)} variants using pandas.")
-        return results
-    except Exception as e:
-        print(f"Error parsing VCF with pandas: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        print("Falling back to manual parsing...")
-        return parse_vcf_manual(file_path)
-
-def parse_vcf_manual(file_path: str) -> List[dict]:
-    """Fallback manual VCF parsing (tab-separated, robust)."""
-    try:
-        results = []
-        print(f"Manual parsing VCF file: {file_path}")
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
-            print(f"Total lines read from file: {len(lines)}")
-            for i, line in enumerate(lines):
-                print(f"Processing line {i+1}: '{line.strip()}'")
-                if line.startswith("#"):
-                    print(f"Line {i+1}: Skipping header line")
-                    continue
-                # Try tab-separated first, then space-separated
-                fields = None
-                for separator in ['\t', ' ']:
-                    test_fields = line.rstrip().split(separator)
-                    # Remove empty fields that might occur with multiple spaces
-                    test_fields = [f for f in test_fields if f.strip()]
-                    if len(test_fields) >= 8:
-                        fields = test_fields
-                        print(f"Line {i+1}: Successfully split with separator {repr(separator)} into {len(fields)} fields")
-                        break
-                
-                if not fields or len(fields) < 8:
-                    print(f"Line {i+1}: Skipping - only {len(fields) if fields else 0} fields (need 8)")
-                    continue
-                chrom, pos, rsid, ref, alt, qual, filt, info = fields[:8]
-                print(f"Line {i+1}: Parsed fields - CHROM: '{chrom}', POS: '{pos}', RSID: '{rsid}', REF: '{ref}', ALT: '{alt}', INFO: '{info}'")
-                gene = "Unknown"
-                for entry in info.split(";"):
-                    if entry.startswith("GENE="):
-                        gene = entry.split("=", 1)[1]
-                        print(f"Line {i+1}: Found gene: {gene}")
-                variant = {
-                    "chromosome": chrom,
-                    "position": int(pos),
-                    "rsid": rsid,
-                    "gene": gene,
-                    "reference": ref,
-                    "alternate": alt,
-                }
-                results.append(variant)
-                print(f"Line {i+1}: Added variant: {variant}")
-        print(f"Manual parsing completed. Total variants found: {len(results)}")
-        return results
-    except Exception as e:
-        print(f"Error in manual parse_vcf: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Error parsing VCF file: {str(e)}")
 
 def extract_gene_from_ann(ann):
     """Extract gene name from annotation field."""
@@ -390,6 +142,127 @@ def get_diet_planner_agent():
         ),
         tools=[google_search, tavily_search]
     )
+
+async def analyze_blood_report_with_gemini(image_path: str) -> Dict[str, Any]:
+    """
+    Analyzes a blood report image using Gemini's vision capabilities.
+    Extracts key parameters and provides an interpretation.
+    """
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Image file not found at '{image_path}'")
+    
+    prompt_parts = """Analyze this blood report image. Extract the following information in a structured JSON format:,
+            - Patient Name (if visible, otherwise 'N/A'),
+            - Date of Report (if visible, otherwise 'N/A'),
+            - For each test result (e.g., Hemoglobin, WBC, Platelets, Glucose, Cholesterol, etc.):,
+              - Test Name,
+              - Value,
+              - Units (if available),
+              - Reference Range (if available, e.g., 'X - Y'),
+              - Status (e.g., 'Normal', 'High', 'Low', 'Borderline' - infer if not explicitly stated by comparing value to reference range),
+            After the JSON, provide a concise medical interpretation of any abnormal or borderline values, explaining their potential implications. If all values are normal, state that. Focus on common blood markers.""",
+        
+    try:
+
+        my_file = client.files.upload(file=image_path)
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[my_file, prompt_parts],
+            )
+
+        print(response.text)
+        full_response_text = response.text
+        json_part_match = re.search(r'```json\n(.*)\n```', full_response_text, re.DOTALL)
+        
+        extracted_json_data = {}
+        if json_part_match:
+            try:
+                extracted_json_data = json.loads(json_part_match.group(1))
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON from Gemini response: {e}")
+                print(f"Problematic JSON string:\n{json_part_match.group(1)}")
+        
+        interpretation_start_index = full_response_text.find("```json")
+        interpretation = full_response_text
+        if json_part_match:
+            # If JSON was found, interpretation is everything after the JSON block
+            interpretation = full_response_text[json_part_match.end():].strip()
+        
+        return {
+            "structured_data": extracted_json_data,
+            "interpretation": interpretation
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Error analyzing blood report with Gemini: {str(e)}")
+
+
+async def analyze_blood_pdf_report_with_gemini(file_path: str) -> Dict[str, Any]:
+    """
+    Analyzes a blood report image using Gemini's vision capabilities.
+    Extracts key parameters and provides an interpretation.
+    """
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"pdf file not found at '{file_path}'")
+    
+    prompt_parts = """Analyze this blood report pdf. Extract the following information in a structured JSON format:,
+            - Patient Name (if visible, otherwise 'N/A'),
+            - Date of Report (if visible, otherwise 'N/A'),
+            - For each test result (e.g., Hemoglobin, WBC, Platelets, Glucose, Cholesterol, etc.):,
+              - Test Name,
+              - Value,
+              - Units (if available),
+              - Reference Range (if available, e.g., 'X - Y'),
+              - Status (e.g., 'Normal', 'High', 'Low', 'Borderline' - infer if not explicitly stated by comparing value to reference range),
+            After the JSON, provide a concise medical interpretation of any abnormal or borderline values, explaining their potential implications. If all values are normal, state that. Focus on common blood markers.""",
+        
+    try:
+
+        filepath = pathlib.Path(file_path)
+
+        prompt = "Summarize this document"
+        response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                types.Part.from_bytes(
+                data=filepath.read_bytes(),
+             mime_type='application/pdf',
+            ),
+        prompt_parts])
+        print(response.text)
+        full_response_text = response.text
+        json_part_match = re.search(r'```json\n(.*)\n```', full_response_text, re.DOTALL)
+        
+        extracted_json_data = {}
+        if json_part_match:
+            try:
+                extracted_json_data = json.loads(json_part_match.group(1))
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON from Gemini response: {e}")
+                print(f"Problematic JSON string:\n{json_part_match.group(1)}")
+        
+        interpretation_start_index = full_response_text.find("```json")
+        interpretation = full_response_text
+        if json_part_match:
+            # If JSON was found, interpretation is everything after the JSON block
+            interpretation = full_response_text[json_part_match.end():].strip()
+        
+        return {
+            "structured_data": extracted_json_data,
+            "interpretation": interpretation
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Error analyzing blood report with Gemini: {str(e)}")
+
+
 
 async def annotate_with_search(variants: List[dict], user_message: str = None) -> List[VariantInfo]:
     """Annotate variants safely under rate limits using concurrency control and backoff."""
@@ -812,3 +685,107 @@ def analyze_file_with_gemini(file_path):
         return f"Error decoding JSON response from Gemini API: {response.text}"
     except Exception as e:
         return f"An unexpected error occurred: {e}" 
+
+
+
+async def process_blood_report_file(file, db, user, chat_title_prefix="Blood Report Analysis", user_message=None, chat_title=None):
+    """
+    Processes an uploaded blood report image file using Gemini for analysis.
+    """
+    try:
+        if not file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A file must be provided."
+            )
+
+        # Validate image file types
+        allowed_image_types = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/tiff', 'application/pdf']
+        mime_type = file.content_type
+        if mime_type not in allowed_image_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type: {mime_type}. Only JPEG, PNG, GIF, BMP, TIFF images are allowed for blood reports."
+            )
+
+        # Save file
+        upload_dir = "uploads"
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        print(f"Blood report file saved: {file_path}")
+
+        # Analyze with Gemini Vision
+        if mime_type == 'application/pdf':
+            gemini_analysis_results = await analyze_blood_pdf_report_with_gemini(file_path)
+            structured_data = gemini_analysis_results["structured_data"]
+            interpretation = gemini_analysis_results["interpretation"]
+        else:
+            gemini_analysis_results = await analyze_blood_report_with_gemini(file_path)
+            structured_data = gemini_analysis_results["structured_data"]
+            interpretation = gemini_analysis_results["interpretation"]
+
+        # Always create a new chat for each blood report upload
+        chat_title_final = chat_title or f"{chat_title_prefix}: {file.filename}"
+        chat = models.Chat(user_id=user.id, title=chat_title_final, chat_type="blood_report")
+        db.add(chat)
+        db.commit()
+        db.refresh(chat)
+
+        user_content = f"Uploaded blood report image: {file.filename}"
+        if user_message:
+            user_content += f"\n\nUser note: {user_message}"
+
+        user_msg = models.Message(chat_id=chat.id, role="user", content=user_content)
+        db.add(user_msg)
+
+        # Format the structured data for display
+        formatted_structured_data = "### 📋 Blood Test Results\n\n"
+        if structured_data:
+            for key, value in structured_data.items():
+                if isinstance(value, list):
+                    formatted_structured_data += f"**{key.replace('_', ' ').title()}:**\n"
+                    for item in value:
+                        if isinstance(item, dict):
+                            formatted_structured_data += " - " + ", ".join([f"{k}: {v}" for k, v in item.items()]) + "\n"
+                        else:
+                            formatted_structured_data += f" - {item}\n"
+                else:
+                    formatted_structured_data += f"**{key.replace('_', ' ').title()}:** {value}\n"
+        else:
+            formatted_structured_data += "No structured data extracted.\n"
+        
+        # Combine structured data and interpretation for the assistant's response
+        assistant_response_content = f"{formatted_structured_data}\n\n### 💡 Interpretation\n\n{interpretation}"
+        
+        # Add tips for the user specific to blood reports
+        assistant_response_content += (
+            "\n\n---\n"
+            "**Tips:**\n"
+            "- Remember, this is an AI interpretation and should not replace professional medical advice. Always consult a doctor for diagnosis and treatment.\n"
+            "- You can ask follow-up questions about specific markers or general health advice! 🩺\n"
+        )
+
+
+        assistant_msg = models.Message(chat_id=chat.id, role="assistant", content=assistant_response_content)
+        db.add(assistant_msg)
+        db.commit()
+
+        return {
+            "chat_id": str(chat.id),
+            "summary_text": assistant_response_content,
+            "structured_data": structured_data,
+            "interpretation": interpretation
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in process_blood_report_file: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing blood report file: {str(e)}"
+        )

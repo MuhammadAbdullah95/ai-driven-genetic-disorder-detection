@@ -27,7 +27,13 @@ from app.routers import auth, chat, message
 from app.routers.auth_utils import get_current_user
 from app.database import SessionLocal, engine
 import app.models as models
-from utils import parse_vcf_comprehensive, parse_vcf, get_agent, annotate_with_search, _handle_chat_logic, process_vcf_file
+from utils import (
+    get_agent,
+    annotate_with_search,
+    _handle_chat_logic,
+    process_vcf_file,
+    process_blood_report_file # Import the new function
+)
 from custom_types import VariantInfo
 
 # Load environment variables
@@ -141,6 +147,13 @@ class ChatResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str = Field(..., description="Error message")
     error_code: Optional[str] = Field(None, description="Error code for frontend handling")
+
+class BloodReportAnalysisResponse(BaseModel):
+    chat_id: Optional[str] = Field(None, description="ID of the created or updated chat session")
+    summary_text: str = Field(..., description="AI-generated summary and interpretation of the blood report")
+    structured_data: Dict = Field(..., description="Extracted structured data from the blood report")
+    interpretation: str = Field(..., description="AI's medical interpretation of the blood report")
+
 
 # Database dependency
 def get_db():
@@ -328,50 +341,44 @@ async def chat_endpoint(
             detail="An error occurred while processing your request"
         )
 
-@app.post("/analyze", tags=["Analysis"])
-async def analyze_vcf_endpoint(
-    file: UploadFile = File(..., description="VCF file to analyze"),
+
+@app.post("/analyze/blood-report", response_model=BloodReportAnalysisResponse, tags=["Analysis"])
+async def analyze_blood_report_endpoint(
+    file: UploadFile = File(..., description="Image of a blood report to analyze (JPEG, PNG, GIF, BMP, TIFF)"),
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user)
+    user: models.User = Depends(get_current_user),
+    message: Optional[str] = Form(None, description="Optional note/message from the user"),
+    chat_title: Optional[str] = Form(None, description="Patient's name or chat title")
 ):
     """
-    Direct VCF analysis endpoint.
+    Analyzes an image of a blood report using AI.
     
-    Analyzes a VCF file and returns detailed genetic variant information
-    without creating a chat session. Useful for one-time analysis.
+    Upload an image file (JPEG, PNG, GIF, BMP, TIFF) of a blood report.
+    The AI will extract relevant information and provide an interpretation.
+    A new chat session will be created or an existing 'blood_report' chat updated.
     
     **Authentication:** Required
     
-    **File Formats:** VCF (Variant Call Format) files
+    **File Formats:** JPEG, PNG, GIF, BMP, TIFF
     
-    **Response:** Detailed analysis of all variants in the file
+    **Response:** AI-generated summary, structured data, and medical interpretation.
     """
     try:
-        # Use unified VCF processing function
-        result = await process_vcf_file(file, db, user, create_chat=True, chat_title_prefix="Analysis")
+        # The process_blood_report_file handles file type validation and Gemini analysis
+        result = await process_blood_report_file(file, db, user, user_message=message, chat_title=chat_title)
         
-        return {
-            "message": "Analysis complete",
-            "chat_id": result["chat_id"],
-            "variants_analyzed": result["variants_analyzed"],
-            "results": result["results"]
-        }
+        return BloodReportAnalysisResponse(
+            chat_id=result["chat_id"],
+            summary_text=result["summary_text"],
+            structured_data=result["structured_data"],
+            interpretation=result["interpretation"]
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in analyze endpoint: {str(e)}", exc_info=True)
+        logger.error(f"Error in analyze_blood_report_endpoint: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while analyzing the VCF file"
+            detail=f"An error occurred while analyzing the blood report: {str(e)}"
         )
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )

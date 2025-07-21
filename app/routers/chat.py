@@ -35,6 +35,7 @@ def create_diet_planner_chat(chat: schemas.ChatCreate, db: Session = Depends(get
     db.commit()
     db.refresh(new_chat)
     return new_chat
+    
 
 # 📜 Get all chats for a user
 @router.get("/", response_model=List[schemas.ChatOut])
