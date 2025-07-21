@@ -416,8 +416,6 @@ export default function ChatPage() {
             </button>
             {profileMenuOpen && (
               <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-bluegray-900 border border-medical-200 dark:border-bluegray-700 rounded-lg shadow-lg z-50 py-2 animate-fade-in">
-                <button className="w-full text-left px-4 py-2 hover:bg-medical-100 dark:hover:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100" onClick={() => { setProfileMenuOpen(false); alert('Profile page coming soon!'); }}>Profile</button>
-                <button className="w-full text-left px-4 py-2 hover:bg-medical-100 dark:hover:bg-bluegray-800 text-bluegray-900 dark:text-bluegray-100" onClick={() => { setProfileMenuOpen(false); alert('Settings page coming soon!'); }}>Settings</button>
                 <button className="w-full text-left px-4 py-2 hover:bg-alert-100 dark:hover:bg-alert-700 text-alert-600 dark:text-alert-300 border-t border-medical-100 dark:border-bluegray-700" onClick={() => { setProfileMenuOpen(false); api.logout(); }}>Logout</button>
               </div>
             )}

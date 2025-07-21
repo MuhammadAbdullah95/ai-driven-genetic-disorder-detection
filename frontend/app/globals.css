@@ -200,3 +200,55 @@
 .markdown th {
   @apply bg-gray-100 font-semibold;
 }
+
+/* Dark mode overrides for markdown/prose using Tailwind's class-based dark mode */
+.dark .markdown,
+.dark .prose,
+.dark .prose-invert {
+  color: #e5e7eb !important;
+}
+.dark .markdown h1, .dark .prose h1, .dark .prose-invert h1 {
+  color: #fff !important;
+}
+.dark .markdown h2, .dark .prose h2, .dark .prose-invert h2 {
+  color: #fca5a5 !important;
+}
+.dark .markdown h3, .dark .prose h3, .dark .prose-invert h3 {
+  color: #f87171 !important;
+}
+.dark .markdown p, .dark .prose p, .dark .prose-invert p,
+.dark .markdown li, .dark .prose li, .dark .prose-invert li {
+  color: #e5e7eb !important;
+}
+.dark .markdown code, .dark .prose code, .dark .prose-invert code {
+  background: #1e293b !important;
+  color: #fca5a5 !important;
+}
+.dark .markdown pre, .dark .prose pre, .dark .prose-invert pre {
+  background: #0f172a !important;
+  color: #e5e7eb !important;
+}
+.dark .markdown th, .dark .prose th, .dark .prose-invert th {
+  background: #1e293b !important;
+  color: #fca5a5 !important;
+}
+.dark .markdown td, .dark .prose td, .dark .prose-invert td {
+  color: #e5e7eb !important;
+}
+.dark .markdown blockquote, .dark .prose blockquote, .dark .prose-invert blockquote {
+  color: #fca5a5 !important;
+  border-left-color: #f87171 !important;
+}
+
+/* High-contrast dark mode for form labels and input text */
+.dark label,
+.dark .block.font-medium,
+.dark .block.font-semibold {
+  color: #f3f4f6 !important; /* Tailwind gray-100 */
+}
+.dark input,
+.dark textarea {
+  color: #fff !important;
+  border-color: #64748b !important; /* bluegray-500 for better contrast */
+  background-color: #1e293b !important; /* bluegray-800 */
+}
