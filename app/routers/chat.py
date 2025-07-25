@@ -76,16 +76,6 @@ async def send_file_message(chat_id: int, file: UploadFile = File(...), db: Sess
         raise HTTPException(status_code=404, detail="Chat not found")
     return await _handle_chat_logic(chat, None, file, db)
 
-@router.patch("/messages/{message_id}", response_model=MessageOut)
-def edit_message(message_id: int, content: dict, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    msg = db.query(models.Message).join(models.Chat).filter(models.Message.id == message_id, models.Chat.user_id == user.id).first()
-    if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
-    msg.content = content['content']
-    db.commit()
-    db.refresh(msg)
-    return msg
-
 @router.delete("/messages/{message_id}", status_code=204)
 def delete_message(message_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     msg = db.query(models.Message).join(models.Chat).filter(models.Message.id == message_id, models.Chat.user_id == user.id).first()
